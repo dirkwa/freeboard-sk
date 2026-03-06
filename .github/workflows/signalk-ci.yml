@@ -1,0 +1,12 @@
+name: SignalK Plugin CI
+
+on:
+  push:
+    branches: [test-plugin-ci]
+
+jobs:
+  test:
+    uses: dirkwa/signalk-server/.github/workflows/plugin-ci.yml@feat-ci-for-plugins
+    with:
+      build-command: 'npm run build:helper'
+      test-command: 'echo "Angular tests require Chrome — skipping in plugin CI"'

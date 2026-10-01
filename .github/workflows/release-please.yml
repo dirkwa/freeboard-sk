@@ -46,7 +46,7 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit --allow-empty -m "chore: release $stable" -m "Release-As: $stable"
+          git commit --allow-empty -m "chore: promote $current to $stable" -m "Release-As: $stable"
           git push origin HEAD:master
 
   release-please:

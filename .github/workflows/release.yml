@@ -60,7 +60,7 @@ jobs:
         # prepack in package.json runs build:all automatically before packing
         run: |
           if [[ "${{ github.ref_name }}" == *-beta.* ]] || [[ "${{ github.ref_name }}" == *-rc.* ]]; then
-            npm publish --provenance --access public --tag beta
+            npm publish --dry-run --access public --tag beta
           else
-            npm publish --provenance --access public
+            npm publish --dry-run --access public
           fi

@@ -25,7 +25,7 @@ jobs:
   # empty commit gives it one, and its Release-As footer fixes the version for
   # every later run until that release is made.
   promote:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'SignalK/freeboard-sk'
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'dirkwa/freeboard-sk'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -69,7 +69,7 @@ jobs:
   release-please:
     needs: promote
     # Runs after promote on a dispatch, and on its own on a push (promote skipped).
-    if: ${{ !cancelled() && needs.promote.result != 'failure' && github.repository == 'SignalK/freeboard-sk' }}
+    if: ${{ !cancelled() && needs.promote.result != 'failure' && github.repository == 'dirkwa/freeboard-sk' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

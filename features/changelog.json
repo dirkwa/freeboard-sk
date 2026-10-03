@@ -102,5 +102,6 @@
   { "feature": "route-following", "kind": "enhanced", "since": "v2.0.0", "date": "2022-04-06", "title": "Course API: reverse route, restart XTE, auto-advance to next point on arrival" },
   { "feature": "route-following", "kind": "enhanced", "since": "v2.19.8", "date": "2026-02-08", "title": "Start navigating a route from the nearest point, or any point, in its Points screen" },
   { "feature": "route-following", "pr": 862, "kind": "enhanced", "since": "v3.2.0", "date": "2026-09-30", "title": "feat(routes): rejoin the active route at a point, or skip the next one" },
-  { "feature": "route-following", "pr": 864, "kind": "enhanced", "since": "v3.2.0", "date": "2026-09-30", "title": "feat(routes): step the active route straight from the vessel" }
+  { "feature": "route-following", "pr": 864, "kind": "enhanced", "since": "v3.2.0", "date": "2026-09-30", "title": "feat(routes): step the active route straight from the vessel" },
+  { "feature": null, "pr": 9001, "kind": "skip", "reason": "e2e dummy feature, not shipped" }
 ]

@@ -126,6 +126,19 @@ describe('skstream.worker processRadarTarget — CPA line to radar targets', () 
     expect(targets.has(REF)).toBe(false);
   });
 
+  it('drops a target whose position is not a valid coordinate', () => {
+    const targets = new Map();
+    for (const position of [
+      { latitude: 91, longitude: 4.2 },
+      { latitude: NaN, longitude: 4.2 },
+      { latitude: 52.1, longitude: Infinity }
+    ]) {
+      processRadarTarget(targets, SELF, target());
+      processRadarTarget(targets, SELF, target({ position }));
+      expect(targets.has(REF)).toBe(false);
+    }
+  });
+
   it('ignores radar paths that are not targets', () => {
     const targets = new Map();
     processRadarTarget(targets, SELF, {

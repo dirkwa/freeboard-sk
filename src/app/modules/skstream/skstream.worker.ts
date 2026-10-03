@@ -1343,7 +1343,8 @@ const RADAR_TARGET_PATH = /^radars\.[^.]+\.targets\.[^.]+$/;
 /**
  * Keep the position of each radar (ARPA) target, keyed by its full Signal K
  * path, so a collision alarm naming it in `data.targetRef` can be located.
- * A lost target, or one deleted (null), is dropped.
+ * A lost target, one deleted (null), or one without a usable position is
+ * dropped.
  */
 export function processRadarTarget(
   targets: Map<string, Position>,
@@ -1362,7 +1363,9 @@ export function processRadarTarget(
   if (
     target?.status === 'lost' ||
     typeof latitude !== 'number' ||
-    typeof longitude !== 'number'
+    typeof longitude !== 'number' ||
+    !Number.isFinite(longitude) ||
+    !(Math.abs(latitude) <= 90)
   ) {
     targets.delete(key);
   } else {

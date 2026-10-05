@@ -7,6 +7,7 @@ import {
   PathValue,
   SKNotification
 } from '../../types/stream';
+import { Position } from 'src/app/types';
 import { AppFacade } from 'src/app/app.facade';
 import { SKWorkerService } from '../skstream/skstream.service';
 import { AlertData, AlertProperties } from './components/alert.component';
@@ -23,8 +24,16 @@ interface PendingAction {
   state: AlertData['priority'];
 }
 
-/** `navigation.closestApproach` notification: also names the other vessel */
+/**
+ * `navigation.closestApproach` notification. The other vessel is named by
+ * `data.targetRef` (the shared collision alarm shape); `other` is the older,
+ * non-standard field some producers still send.
+ */
 interface CpaNotification extends SKNotification {
+  data?: {
+    targetRef?: string;
+    cpaPositions?: { self?: unknown; target?: unknown };
+  };
   other?: string;
 }
 
@@ -101,9 +110,17 @@ export class NotificationManager {
     });
 
     // update closest vessel ids
-    this.app.data.vessels.closest = alerts
-      .filter((i) => i[1].type === 'cpa')
-      .map((i) => i[1].properties?.vesselId);
+    const cpaAlerts = alerts.filter((i) => i[1].type === 'cpa');
+    this.app.data.vessels.closest = cpaAlerts.map(
+      (i) => i[1].properties?.vesselId
+    );
+    this.app.data.vessels.cpaPositions = new Map(
+      cpaAlerts
+        .filter(
+          (i) => i[1].properties?.vesselId && i[1].properties.cpaPositions
+        )
+        .map((i) => [i[1].properties.vesselId, i[1].properties.cpaPositions])
+    );
   }
 
   /**
@@ -489,8 +506,25 @@ export class NotificationManager {
 
   // parse ClosestApproach message data
   private parseCpa(msg: CpaNotification): AlertProperties {
+    const self = toPosition(msg.data?.cpaPositions?.self);
+    const target = toPosition(msg.data?.cpaPositions?.target);
     return {
-      vesselId: msg.other ?? undefined
+      vesselId: msg.data?.targetRef ?? msg.other ?? undefined,
+      cpaPositions: self && target ? { self, target } : undefined
     };
   }
+}
+
+/** A Signal K `{ latitude, longitude }` as a [lon, lat] map position. */
+function toPosition(value: unknown): Position | undefined {
+  const p = value as { latitude?: unknown; longitude?: unknown } | null;
+  if (
+    typeof p?.latitude !== 'number' ||
+    typeof p.longitude !== 'number' ||
+    Math.abs(p.latitude) > 90 ||
+    Math.abs(p.longitude) > 180
+  ) {
+    return undefined;
+  }
+  return [p.longitude, p.latitude];
 }

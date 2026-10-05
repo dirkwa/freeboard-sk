@@ -89,6 +89,12 @@ export type DistanceUnitDef = 'kilometer' | 'naut-mile';
 
 export type PalettePosition = { x: number; y: number };
 
+/** Positions of own vessel and another at their closest point of approach. */
+export interface CpaPositions {
+  self: Position;
+  target: Position;
+}
+
 export interface IAppConfig {
   ui: {
     mapNorthUp: boolean;
@@ -358,6 +364,7 @@ export interface FBAppData {
     activeId: string;
     active: SKVessel;
     closest: string[];
+    cpaPositions: Map<string, CpaPositions>; // keyed by the ids in closest
     prefAvailablePaths: { [key: string]: string }; // preference paths available from source
     flagged: string[];
     showTrack: string[]; // ais targets to display track for (session-only, independent of aisShowTrack)

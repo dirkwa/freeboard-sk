@@ -1719,6 +1719,11 @@ export class AppComponent {
         title = 'SaR Properties';
         icon = 'tour';
         atonType = 'sar';
+      } else if (e.id.startsWith('targets.')) {
+        v = this.app.data.targets.get(e.id);
+        title = 'Target Properties';
+        icon = 'radar';
+        atonType = 'aton';
       } else {
         v = this.app.data.atons.get(e.id);
         title = 'AtoN Properties';

@@ -2309,7 +2309,9 @@ export class FBMapComponent implements OnInit, OnDestroy {
         ? 'history'
         : layer === 'track-vessels'
           ? 'ais'
-          : undefined;
+          : layer === 'trail'
+            ? 'trail'
+            : undefined;
     this.wholeTrackSub = (
       source && this.trackHistory.wholeTrack(source, hf.context)
     )?.subscribe({
@@ -2317,10 +2319,16 @@ export class FBMapComponent implements OnInit, OnDestroy {
         if (!track?.times || this.overlay().id !== id || !this.overlay().show) {
           return;
         }
+        // the local trail carries on from the server trail, as when drawn
+        const timed = { lines: track.lines, times: track.times };
+        const whole =
+          source === 'trail'
+            ? trailTapTrack(timed, true, this.app.localTrailTimed())
+            : timed;
         const trackHistory = this.trackPopover({
           ...hf,
-          lines: track.lines,
-          times: track.times
+          lines: whole.lines,
+          times: whole.times
         });
         this.overlay.update((o) => ({ ...o, trackHistory }));
       },

@@ -30,6 +30,7 @@ import {
   parseHistoryTrack,
   poseAt,
   presetRange,
+  timedTrail,
   unionBboxes
 } from './track-history';
 import { Position } from 'src/app/types';
@@ -43,13 +44,16 @@ export interface TrackHistoryGhost {
   /** AIS ship type, for the vessel's icon; undefined for the own vessel. */
   typeId?: number;
 }
-import { map, Observable } from 'rxjs';
+import { forkJoin, map, Observable } from 'rxjs';
 import {
   AIS_TRACK_MAX_POINTS,
   AIS_TRACK_WINDOW,
   needsAisRefetch,
   padExtent,
   queryString,
+  TRAIL_DURATION_ALL,
+  trailBands,
+  trailBandUrl,
   viewportBbox
 } from './track-source';
 
@@ -366,20 +370,25 @@ export class TrackHistoryService {
    * map box. The Track API clips what it returns to a `bbox`, so a track
    * fetched for the view is cut where it leaves the fetched box, and a passage
    * read from it would stop there too. Undefined where the drawn track was
-   * not fetched by box: AIS tracks of vessels picked one by one. */
+   * not fetched by box: AIS tracks of vessels picked one by one, and an own
+   * trail shorter than "All". */
   wholeTrack(
-    source: 'history' | 'ais',
+    source: 'history' | 'ais' | 'trail',
     context: string
   ): Observable<HistoryTrack | undefined> | undefined {
     const provider = this.provider();
+    const epsilon = this.view
+      ? historyEpsilon(this.view.zoom, this.view.extent)
+      : null;
+    if (source === 'trail') {
+      return this.wholeTrail(epsilon ?? undefined, provider);
+    }
     let query: string;
     if (source === 'history') {
       query = historyQuery({
         context,
         bbox: null,
-        epsilon: this.view
-          ? historyEpsilon(this.view.zoom, this.view.extent)
-          : null,
+        epsilon,
         range: this.range(),
         provider
       });
@@ -396,6 +405,33 @@ export class TrackHistoryService {
     }
     return this.get(`/tracks?${query}`)?.pipe(
       map((fc) => parseHistoryTrack(context, fc, provider))
+    );
+  }
+
+  /** The own trail's bands as the worker fetches them, with none of them
+   * asked for by box. */
+  private wholeTrail(
+    epsilon: number | undefined,
+    provider: string | undefined
+  ): Observable<HistoryTrack | undefined> | undefined {
+    const vessels = this.app.config.vessels;
+    if (vessels.trailDuration !== TRAIL_DURATION_ALL) {
+      return undefined;
+    }
+    const requests = trailBands(
+      TRAIL_DURATION_ALL,
+      vessels.trailResolution,
+      Date.now(),
+      epsilon
+    ).map((band) => this.get(trailBandUrl('/tracks', band, provider)));
+    if (requests.some((r) => !r)) {
+      return undefined;
+    }
+    return forkJoin(requests).pipe(
+      map((fcs) => {
+        const trail = timedTrail(fcs, provider);
+        return trail && { context: 'self', ...trail };
+      })
     );
   }
 

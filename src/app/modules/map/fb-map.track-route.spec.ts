@@ -205,11 +205,21 @@ describe('FBMapComponent — a route from a recorded track', () => {
       );
     });
 
-    it('leaves the own trail as drawn', () => {
-      const { cmp } = withWholeTrack();
-      tap(cmp, 'trail.self.server', 'self', passage(0));
+    it('answers the own trail from the whole trail and the local one', () => {
+      const track = passage(0);
+      const { cmp, answer } = withWholeTrack();
+      cmp.app = {
+        useInfoPanel: () => true,
+        localTrailTimed: () => ({ lines: [], times: [] })
+      };
+      tap(cmp, 'trail.self.server', 'self', clipped(track));
 
-      expect(cmp.trackHistory.wholeTrack).not.toHaveBeenCalled();
+      answer.next({ context: 'self', lines: track.lines, times: track.times });
+
+      expect(cmp.trackHistory.wholeTrack).toHaveBeenCalledWith('trail', 'self');
+      const th = cmp.overlay().trackHistory;
+      expect(near(th.route[0], A)).toBe(true);
+      expect(near(th.route[th.route.length - 1], track.end)).toBe(true);
     });
 
     it('drops an answer for a popover no longer open', () => {

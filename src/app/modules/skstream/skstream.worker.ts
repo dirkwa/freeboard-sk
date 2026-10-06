@@ -42,17 +42,14 @@ import {
   TrackSource,
   trackSourceUrls,
   tracksApiUrl,
+  TRAIL_BBOX_PAD,
   TRAIL_DURATION_ALL,
   TRAIL_MAX_HOURS,
   trailBands,
-  trailBandUrl
+  trailBandUrl,
+  viewportBbox
 } from './track-source';
-import {
-  historyEpsilon,
-  joinStretches,
-  parseHistoryTrack,
-  parseTimedTracks
-} from './track-history';
+import { historyEpsilon, timedTrail, parseTimedTracks } from './track-history';
 
 interface AisStatus {
   updated: { [key: string]: boolean };
@@ -541,7 +538,8 @@ function requestVesselTrail() {
 
 /** Fetch the own-vessel trail from the v2 Track API: the same three bands as
  * v1, as absolute from/to, from the default provider only. With "All" the
- * oldest band is simplified by the server to a pixel at the map's zoom.
+ * oldest band is simplified by the server to a pixel at the map's zoom, and
+ * asked for only in the padded map view.
  * `token` is the request's trailGate token; it answers only while current. */
 export function getVesselTrailV2(
   url: string,
@@ -552,11 +550,15 @@ export function getVesselTrailV2(
   // sized as for Track history: a pixel at the deepest zoom of the level
   const epsilon =
     (mapView && historyEpsilon(mapView.zoom, mapView.extent)) ?? undefined;
+  const bbox =
+    (mapView && viewportBbox(padExtent(mapView.extent, TRAIL_BBOX_PAD))) ??
+    undefined;
   const bands = trailBands(
     opt.trailDuration,
     opt.trailResolution,
     Date.now(),
-    epsilon
+    epsilon,
+    bbox
   );
   const msg = new TrailMessage();
   msg.playback = playbackMode;
@@ -579,28 +581,6 @@ export function getVesselTrailV2(
       msg.result = null;
       postMessage(msg);
     });
-}
-
-/** The trail bands as recorded, each point with its time, or undefined when
- * the provider sent no times. Kept apart from the drawn trail because
- * assembleTrail() simplifies and re-splits the older bands. Bands that follow
- * on in time are joined, so a tapped stretch reports when the passage began,
- * not the band. */
-export function timedTrail(
-  bands: unknown[],
-  provider?: string
-): TrailMessage['timed'] {
-  let timed = { lines: [] as Position[][], times: [] as string[][] };
-  for (const fc of bands) {
-    const t = parseHistoryTrack('self', fc, provider);
-    if (t && !t.times) {
-      return undefined;
-    }
-    if (t) {
-      timed = joinStretches(timed, { lines: t.lines, times: t.times });
-    }
-  }
-  return timed.lines.length ? timed : undefined;
 }
 
 /** Re-query AIS tracks shortly after the view or the picks settle, so a flurry

@@ -173,6 +173,7 @@ import { trackTimesHiddenByVessel, trailTapTrack } from './track-time-taps';
 import { TrackHistoryService } from 'src/app/modules/skstream/track-history.service';
 import { AIS_TRACK_MIN_ZOOM } from 'src/app/modules/skstream/track-source';
 import {
+  fusedVessels,
   locateTarget,
   unlinkedTargets
 } from 'src/app/modules/skstream/sensor-targets';
@@ -604,7 +605,10 @@ export class FBMapComponent implements OnInit, OnDestroy {
     if (!this.dfeat.self.position || !Array.isArray(this.dfeat.self.position)) {
       this.dfeat.self.position = lastPos;
     }
-    this.dfeat.ais = this.app.data.vessels.aisTargets;
+    this.dfeat.ais = fusedVessels(
+      this.app.data.vessels.aisTargets,
+      this.app.data.targets
+    );
     this.dfeat.aircraft = this.app.data.aircraft;
     this.dfeat.sar = this.app.data.sar;
     this.dfeat.meteo = this.app.data.meteo;
@@ -625,7 +629,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
         this.app.data.vessels.closest.forEach((id: string) => {
           const target = locateTarget(
             id,
-            this.app.data.vessels.aisTargets,
+            this.dfeat.ais,
             this.app.data.targets
           );
           const cpa = this.app.data.vessels.cpaPositions.get(id);

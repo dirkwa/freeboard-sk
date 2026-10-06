@@ -25,11 +25,14 @@
     "recommends": [
       "signalk-charts-provider-simple",
       "@signalk/tracks-plugin",
+      "signalk-buddylist-plugin",
       "signalk-instrument-widgets",
       "signalk-symbol-manager",
       "@signalk/open-meteo-provider",
       "signalk-basic-tide-widgets",
-      "signalk-restricted-areas"
+      "signalk-restricted-areas",
+      "@marineyachtradar/signalk-plugin"
+      "signalk-flags"
     ]
   },
   "engines": {

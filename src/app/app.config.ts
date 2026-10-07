@@ -744,6 +744,7 @@ export function initData(): FBAppData {
       activeId: null,
       active: null,
       closest: [],
+      cpaPositions: new Map(),
       prefAvailablePaths: {}, // preference paths available from source,
       flagged: [], // flagged ais targets
       showTrack: [] // ais targets to display track for (session-only)
@@ -752,6 +753,7 @@ export function initData(): FBAppData {
     atons: new Map(), // received AIS AtoN data
     sar: new Map(), // received AIS SaR data
     meteo: new Map(), // received AIS Meteo data
+    targets: new Map(), // radar, camera and other sensor targets
     racing: {
       startLine: []
     }

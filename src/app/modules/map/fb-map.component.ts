@@ -40,6 +40,7 @@ import {
   S57_NAMES
 } from './popovers';
 import { FreeboardOpenlayersModule } from 'src/app/modules/map/ol';
+import { CpaTarget } from 'src/app/modules/map/ol/lib/alarms/layer-cpa-alarm.component';
 import { CoordsPipe } from 'src/app/lib/pipes';
 
 import { getGreatCircleBearing } from 'geolib';
@@ -82,6 +83,7 @@ import {
   SKAtoN,
   SKAircraft,
   SKSaR,
+  SKSensorTarget,
   SKMeteo,
   SKStreamFacade,
   AnchorService,
@@ -96,6 +98,7 @@ import {
   mapControls,
   aircraftStyles,
   sarStyles,
+  sensorTargetStyles,
   regionStyles,
   routeStyles,
   anchorStyles,
@@ -170,6 +173,11 @@ import { trackTimesHiddenByVessel, trailTapTrack } from './track-time-taps';
 import { TrackHistoryService } from 'src/app/modules/skstream/track-history.service';
 import { AIS_TRACK_MIN_ZOOM } from 'src/app/modules/skstream/track-source';
 import {
+  fusedVessels,
+  locateTarget,
+  unlinkedTargets
+} from 'src/app/modules/skstream/sensor-targets';
+import {
   durationLabel,
   PointTime,
   trackTimeInfo
@@ -197,11 +205,12 @@ interface IFeatureData {
   atons: Map<string, SKAtoN>;
   sar: Map<string, SKSaR>;
   meteo: Map<string, SKMeteo>;
+  targets: Map<string, SKSensorTarget>; // sensor targets not linked to a drawn boat
   self: SKVessel; //self vessel
   ais: Map<string, SKVessel>; // other vessels
   active: SKVessel; // focussed vessel
   navData: { position: Position; startPosition: Position };
-  closest: Array<LineString>;
+  closest: Array<CpaTarget>;
 }
 
 enum INTERACTION_MODE {
@@ -318,6 +327,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
     destination: destinationStyles,
     aircraft: aircraftStyles,
     sar: sarStyles,
+    sensorTarget: sensorTargetStyles,
     layline: laylineStyles,
     targetAngle: targetAngleStyle,
     raceCourse: raceCourseStyles,
@@ -342,6 +352,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
     atons: new Map(),
     sar: new Map(),
     meteo: new Map(),
+    targets: new Map(),
     self: new SKVessel(), //self vessel
     ais: new Map(), // other vessels
     active: new SKVessel(), // focussed vessel
@@ -594,24 +605,41 @@ export class FBMapComponent implements OnInit, OnDestroy {
     if (!this.dfeat.self.position || !Array.isArray(this.dfeat.self.position)) {
       this.dfeat.self.position = lastPos;
     }
-    this.dfeat.ais = this.app.data.vessels.aisTargets;
+    this.dfeat.ais = fusedVessels(
+      this.app.data.vessels.aisTargets,
+      this.app.data.targets
+    );
     this.dfeat.aircraft = this.app.data.aircraft;
     this.dfeat.sar = this.app.data.sar;
     this.dfeat.meteo = this.app.data.meteo;
     this.dfeat.atons = this.app.data.atons;
+    this.dfeat.targets = unlinkedTargets(
+      this.app.data.targets,
+      this.app.data.vessels.aisTargets,
+      this.app.data.vessels.self
+    );
     this.dfeat.active = this.app.data.vessels.active;
     this.dfeat.navData.position = this.course.courseData().position;
     this.dfeat.navData.startPosition = this.course.courseData().startPosition;
     // calculate CPA lines
     const parseClosest = () => {
-      const v = [];
-      if (this.app.data.vessels.self.position) {
+      const v: CpaTarget[] = [];
+      const self = this.app.data.vessels.self.position;
+      if (self) {
         this.app.data.vessels.closest.forEach((id: string) => {
-          if (this.app.data.vessels.aisTargets.has(id)) {
-            const a = this.app.data.vessels.aisTargets.get(id);
-            if (a.position) {
-              v.push([a.position, this.app.data.vessels.self.position]);
-            }
+          const target = locateTarget(
+            id,
+            this.dfeat.ais,
+            this.app.data.targets
+          );
+          const cpa = this.app.data.vessels.cpaPositions.get(id);
+          if (target || cpa) {
+            v.push({
+              self,
+              target,
+              selfAtCpa: cpa?.self,
+              targetAtCpa: cpa?.target
+            });
           }
         });
       }
@@ -643,7 +671,9 @@ export class FBMapComponent implements OnInit, OnDestroy {
           (this.overlay().type === 'atons' &&
             !this.dfeat.atons.has(this.overlay().id)) ||
           (this.overlay().type === 'aircraft' &&
-            !this.dfeat.aircraft.has(this.overlay().id))
+            !this.dfeat.aircraft.has(this.overlay().id)) ||
+          (this.overlay().id?.startsWith('targets.') &&
+            !this.dfeat.targets.has(this.overlay().id))
         ) {
           this.overlay().show = false;
         } else {
@@ -652,6 +682,13 @@ export class FBMapComponent implements OnInit, OnDestroy {
               return Object.assign({}, current, {
                 position: this.dfeat.ais.get(current.id).position,
                 vessel: this.dfeat.ais.get(current.id)
+              });
+            });
+          } else if (this.dfeat.targets.has(this.overlay().id)) {
+            this.overlay.update((current) => {
+              return Object.assign({}, current, {
+                position: this.dfeat.targets.get(current.id).position,
+                aton: this.dfeat.targets.get(current.id)
               });
             });
           }
@@ -1647,6 +1684,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
       let sar: SKSaR;
       let meteo: SKMeteo;
       let aircraft: SKAircraft;
+      let sensorTarget: SKSensorTarget;
       let vessel: SKVessel;
       let icon: AppIconDef;
       let text: string;
@@ -1812,6 +1850,17 @@ export class FBMapComponent implements OnInit, OnDestroy {
             addToFeatureList = true;
             aircraft = this.app.data.aircraft.get(id);
             text = aircraft ? aircraft.name || aircraft.mmsi : '';
+            break;
+          case 'targets':
+            icon = {
+              name: 'radar',
+              svgIcon: undefined
+            };
+            addToFeatureList = true;
+            sensorTarget = this.app.data.targets.get(id);
+            text = sensorTarget
+              ? sensorTarget.name || sensorTarget.mmsi || sensorTarget.type.name
+              : '';
             break;
           case TRACK_HISTORY_ID:
             addToFeatureList = true;
@@ -2098,6 +2147,16 @@ export class FBMapComponent implements OnInit, OnDestroy {
         poData.type = t[0];
         poData.id = id;
         poData.aton = this.app.data.meteo.get(id);
+        poData.position = poData.aton.position;
+        poData.show = true;
+        break;
+      case 'targets':
+        if (!this.dfeat.targets.has(id)) {
+          return false;
+        }
+        poData.type = 'aton';
+        poData.id = id;
+        poData.aton = this.dfeat.targets.get(id);
         poData.position = poData.aton.position;
         poData.show = true;
         break;

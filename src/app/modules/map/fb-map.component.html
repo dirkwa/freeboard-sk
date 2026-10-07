@@ -471,6 +471,25 @@
     </sk-ais-targets>
   }
 
+  <!-- Radar, camera and other sensor targets -->
+  @if (app.config.ui.showAisTargets) {
+    <sk-ais-targets
+      [darkMode]="app.uiConfig().invertColor"
+      [targets]="dfeat.targets"
+      [targetStyles]="featureStyles.sensorTarget"
+      targetContext="targets"
+      [labelMinZoom]="this.app.config.map.labelsMinZoom"
+      [mapZoom]="mapZoomLevel()"
+      [updateIds]="skstream.aisStatus().updated"
+      [staleIds]="skstream.aisStatus().stale"
+      [removeIds]="skstream.aisStatus().expired"
+      [inactiveTime]="app.config.vessels.aisStaleAge"
+      [zIndex]="970"
+      [cogLineLength]="app.config.vessels.aisCogLine"
+    >
+    </sk-ais-targets>
+  }
+
   <!-- SAR targets -->
   @if (app.config.ui.showAisTargets) {
     <sk-ais-targets
@@ -790,7 +809,7 @@
     </fb-anchor-alarm>
   }
   @if (dfeat.closest.length !== 0) {
-    <fb-cpa-alarms [cpaLines]="dfeat.closest" [zIndex]="350"> </fb-cpa-alarms>
+    <fb-cpa-alarms [cpaTargets]="dfeat.closest" [zIndex]="350"> </fb-cpa-alarms>
   }
 
   <!-- MOB alarms: above the AIS vessel/target layers (900-985) so a survival-craft

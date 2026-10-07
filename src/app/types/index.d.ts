@@ -7,6 +7,7 @@ import {
   SKSaR,
   SKAtoN,
   SKAircraft,
+  SKSensorTarget,
   SKVessel
 } from '../modules/skresources/resource-classes';
 import { Options } from '../modules/map/ol/lib/charts/s57.service';
@@ -87,6 +88,12 @@ export type SpeedUnitDef = 'kn' | 'm/s' | 'km/h' | 'mph';
 export type DistanceUnitDef = 'kilometer' | 'naut-mile';
 
 export type PalettePosition = { x: number; y: number };
+
+/** Positions of own vessel and another at their closest point of approach. */
+export interface CpaPositions {
+  self: Position;
+  target: Position;
+}
 
 export interface IAppConfig {
   ui: {
@@ -357,6 +364,7 @@ export interface FBAppData {
     activeId: string;
     active: SKVessel;
     closest: string[];
+    cpaPositions: Map<string, CpaPositions>; // keyed by the ids in closest
     prefAvailablePaths: { [key: string]: string }; // preference paths available from source
     flagged: string[];
     showTrack: string[]; // ais targets to display track for (session-only, independent of aisShowTrack)
@@ -365,6 +373,7 @@ export interface FBAppData {
   atons: Map<string, SKAtoN>; // received AIS AtoN data
   sar: Map<string, SKSaR>; // received AIS SaR data
   meteo: Map<string, SKMeteo>; // received AIS Meteo data
+  targets: Map<string, SKSensorTarget>; // radar, camera and other sensor targets
   racing: {
     startLine: LineString;
   };

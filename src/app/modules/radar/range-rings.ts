@@ -20,8 +20,11 @@ export function isRoundDistance(value: number): boolean {
 
 /**
  * The distances (m) of range rings for a radar range (m): evenly spaced, the
- * outer ring on the range itself, at round values in the unit `toUnit`
- * converts metres to.
+ * outer ring on the range itself. `toUnit` converts meters to the display
+ * unit for choosing a round interval. Tries 4, 3, 6, 5, then 2 rings; falls
+ * back to four evenly spaced rings if no interval is round.
+ * Returns an empty array when range is missing, NaN or nonpositive.
+ * Errors thrown by `toUnit` propagate to the caller.
  */
 export function rangeRingDistances(
   range: number,
@@ -38,7 +41,8 @@ export function rangeRingDistances(
 
 const MAX_LABEL_DECIMALS = 2;
 
-/** The decimals a ring distance in the user unit needs, e.g. 2 for 0.75. */
+/** The decimals a ring distance in the user unit needs, e.g. 2 for 0.75,
+ *  capped at two even when more would be needed to represent the value. */
 export function labelDecimals(value: number): number {
   for (let p = 0; p < MAX_LABEL_DECIMALS; p++) {
     const scaled = value * Math.pow(10, p);
@@ -49,7 +53,8 @@ export function labelDecimals(value: number): number {
   return MAX_LABEL_DECIMALS;
 }
 
-/** The radar's range (m), or undefined when it has not reported one. */
+/** The radar's range (m), or undefined when absent or not a number.
+ *  Numeric values are returned without checking their sign or finiteness. */
 export function radarRange(radar: ActiveRadar | undefined): number | undefined {
   const value = radar?.controls?.get('range')?.value;
   return typeof value === 'number' ? value : undefined;

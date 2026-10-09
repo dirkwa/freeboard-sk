@@ -53,6 +53,7 @@ export class RadarRingsComponent implements OnInit, OnChanges, OnDestroy {
   protected layer: VectorLayer<VectorSource>;
   protected source: VectorSource;
 
+  /** Detach the view from Angular's automatic change detection. */
   constructor(
     protected changeDetectorRef: ChangeDetectorRef,
     protected mapComponent: MapComponent
@@ -60,12 +61,15 @@ export class RadarRingsComponent implements OnInit, OnChanges, OnDestroy {
     this.changeDetectorRef.detach();
   }
 
+  /** Create the ring layer and attach it if the parent map is available. */
   ngOnInit() {
     this.source = new VectorSource({ features: this.buildFeatures() });
     this.layer = new VectorLayer({ source: this.source, zIndex: this.zIndex });
     this.mapComponent.getMap()?.addLayer(this.layer);
   }
 
+  /** Update stacking order or rebuild rings for position, distance, label
+   *  or theme changes. Changes before layer initialization are ignored. */
   ngOnChanges(changes: SimpleChanges) {
     if (!this.layer) {
       return;
@@ -79,11 +83,17 @@ export class RadarRingsComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
+  /** Remove the ring layer from the available map and clear its reference. */
   ngOnDestroy() {
     this.mapComponent.getMap()?.removeLayer(this.layer);
     this.layer = null;
   }
 
+  /**
+   * Build a ring and an east-side label per distance in meters, centered on
+   * the WGS84 [longitude, latitude] position. Returns themed EPSG:3857
+   * features, or an empty array if position or rings is not an array.
+   */
   private buildFeatures(): Feature[] {
     if (!Array.isArray(this.position) || !Array.isArray(this.rings)) {
       return [];

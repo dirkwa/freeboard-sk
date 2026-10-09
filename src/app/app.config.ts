@@ -24,7 +24,14 @@ export function validateConfig(settings: IAppConfig): boolean {
   return result;
 }
 
-// clean loaded app config (migrates legacy shapes in place)
+/**
+ * Migrate loaded settings in place and fill missing defaults.
+ * `hostParams` supplies URL overrides for northup, movemap and zoom. Only
+ * the string '0' disables the boolean overrides; parsed zoom is clamped to
+ * 1–28, and an unparseable zoom leaves the configured level unchanged.
+ * Expects the legacy config structure, including units and map; malformed
+ * settings can raise TypeError after earlier fields have been migrated.
+ */
 export function cleanConfig(
   settings: LegacyAppConfig,
   hostParams: { [key: string]: unknown }
@@ -520,7 +527,7 @@ export function cleanConfig(
   }
 }
 
-// initialise default configuration
+/** Return the initial app settings, with radar range rings enabled. */
 export function defaultConfig(): IAppConfig {
   return {
     ui: {

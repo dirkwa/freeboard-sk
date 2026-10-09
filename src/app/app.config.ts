@@ -410,11 +410,15 @@ export function cleanConfig(
   if (typeof settings.radars === 'undefined') {
     settings.radars = {
       deviceId: '',
-      opacity: 1
+      opacity: 1,
+      rings: true
     };
   } else {
     if (typeof settings.radars.opacity === 'undefined') {
       settings.radars.opacity = 1;
+    }
+    if (typeof settings.radars.rings === 'undefined') {
+      settings.radars.rings = true;
     }
   }
 
@@ -681,7 +685,8 @@ export function defaultConfig(): IAppConfig {
     },
     radars: {
       deviceId: undefined,
-      opacity: 1
+      opacity: 1,
+      rings: true
     },
     experiments: false,
     plotterExtensions: {

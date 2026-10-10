@@ -101,10 +101,6 @@
                 <li>Hazardous Region entry</li>
               </ul>
             </li>
-            <li>
-              <b>Instrument Panel:</b> allows you to select from the apps
-              installed on your Signal K server for display.
-            </li>
             <li><b>Other Vessels: </b> display other vessels on map.</li>
             <li>
               <b>History Playback: </b> replay timeseries data from the Signal K
@@ -231,7 +227,8 @@
               <tr>
                 <td>Anchor Watch</td>
                 <td>
-                  <b>signalk-anchoralarm-plugin</b>
+                  <b>signalk-anchoralarm-plugin</b><br />
+                  <b>hoekens-anchor-alarm</b>
                 </td>
               </tr>
               <tr>
@@ -243,6 +240,7 @@
               <tr>
                 <td>Closest approach / Crossing vessel</td>
                 <td>
+                  <b>signalk-collision-alerts</b><br />
                   <b>signalk-derived-data</b>
                 </td>
               </tr>
@@ -412,31 +410,6 @@
           <b>Right menu bar:</b>
           Provides access to quick-actions and experiments.
           <ul>
-            <li class="nobullet">
-              <i class="material-icons">av_timer</i>
-              <b>Instrument panel:</b> The instrument panel is used to display
-              selected Web App(s) installed on the Signal K server.<br />
-              <i
-                >The default instruments shown are
-                <b>@signalk/instrumentpanel</b></i
-              ><br />
-              Use the <a href="#settings">Settings</a> screen to:
-              <ul>
-                <li>Select the Web App to display</li>
-                <li>
-                  Select one or more <i>Favourites</i> that can be switched into
-                  view by using the
-                  <i class="material-icons">arrow_back_ios</i> and
-                  <i class="material-icons">arrow_forward_ios</i>
-                  buttons.
-                </li>
-                <li>
-                  You can also open the displayed Web App in it's own window by
-                  clicking the <i class="material-icons">open_in_new</i> button.
-                </li>
-              </ul>
-            </li>
-
             <li class="nobullet">
               <i class="material-icons" style="color: red">volume_off</i>
               <b>Web Audio Off:</b>
@@ -709,25 +682,30 @@
 
           When RADARs are detected, Freeboard-SK will display the
           <img src="./img/command-radar.svg" />
-          button to toggle on/off the RADAR display.
+          button, which shows the RADAR on the map and opens the RADAR control
+          panel.
           <br />&nbsp;<br />
-
-          Clicking the button will:
-          <ul>
-            <li>Initiate the connection to the MaYaRa server</li>
-            <li>Open the RADAR control panel</li>
-          </ul>
 
           In the RADAR control panel you are presented controls to:
           <ul>
-            <li>Turn On /Off the MaYaRa server connection</li>
-            <li>Set the opacity of the RADAR overlay on the map.</li>
-            <li>Display / Set RADAR base category controls.</li>
+            <li>Switch the RADAR between Standby and Transmit.</li>
+            <li>Show / hide the RADAR and its range rings on the map.</li>
+            <li>Set the RADAR range and the opacity of the overlay.</li>
+            <li>Display / Set all of the controls the RADAR offers.</li>
+            <li>Draw and edit the RADAR guard zones.</li>
           </ul>
 
-          When multiple RADAR devices are present you can select the preferred
-          device to use in
+          When multiple RADAR devices are present you can choose one from the
+          RADAR name in the control panel, or select the preferred device in
           <a href="#settings">SETTINGS</a>. <br />&nbsp;<br />
+
+          <i
+            >For how to use these controls, see the <b>Radar Overlay</b> and
+            <b>Radar Guard Zones</b> entries in the Feature Browser (<b
+              >Main menu</b
+            >
+            or <b>More actions</b> &rarr; <b>What's New</b>).</i
+          ><br />&nbsp;<br />
 
           <i
             >Note: To enable RADAR support your Signal K Server must have both
@@ -1240,7 +1218,8 @@
                 </li>
                 <li>
                   <b>In view:</b> Toggle this switch to list only the charts
-                  that cover the current map view.
+                  that cover the current map view. The switch stays as you left
+                  it.
                 </li>
                 <li>
                   <b>Bounds:</b> Toggle this switch to display the bounds of the
@@ -1675,111 +1654,26 @@
         <div class="panel" id="anchor">
           <h4><i class="material-icons">anchor</i> Anchor Watch</h4>
 
-          Freeboard integrates with the <i>signalk-anchor-alarm</i> plugin to
-          facilitate the setting of an anchor watch alarm.
+          Anchor Watch sets an anchor alarm: the Signal K server watches the
+          vessel's position and raises an alarm when it moves outside the alarm
+          radius around the anchor. It requires the
+          <i>signalk-anchoralarm-plugin</i> or <i>hoekens-anchor-alarm</i>
+          (2.12.0 or later) plugin on the server.
           <div>
             Select the <i class="material-icons">anchor</i>
             <b>Anchor Watch</b> option from the Main menu.
           </div>
+          <br />
+          <i
+            >For how to drop, set and adjust the anchor watch, see the
+            <b>Anchor Watch</b> entry in the Feature Browser (<b>Main menu</b>
+            or <b>More actions</b> &rarr; <b>What's New</b>).</i
+          >
 
           <div>
-            <div style="padding-left: 15px">
-              The following modes of operation are available:
-              <ol>
-                <li>Drop and set (calculated radius using position)</li>
-                <li>Drop and set (specified radius)</li>
-                <li>Manual set (calculated radius using rode length)</li>
-              </ol>
-            </div>
-
-            <div style="padding-left: 15px">
-              <h5>1. Drop and set (calculated radius using position)</h5>
-              <img
-                src="./img/anchor_watch.png"
-                style="max-width: 250px"
-                alt=""
-              />
-              <br />
-              In this mode of operation, after dropping the physical anchor,
-              slide the toggle to <b>Drop</b> then:
-              <ol>
-                <li>
-                  Let out the rode and when complete click <b>Set</b>. This will
-                  set the anchor position and the maximum radius. The server
-                  will commence watching the vessel position and raise an alarm
-                  if the vessel moves outside the maximum radius distance.
-                </li>
-              </ol>
-              <img
-                src="./img/anchor_watch_rode.png"
-                style="max-width: 250px"
-                alt=""
-              />
-            </div>
-            <div style="padding-left: 15px">
-              <h5>2. Drop and set (specified radius)</h5>
-              <img
-                src="./img/anchor_watch_2.png"
-                style="max-width: 250px"
-                alt=""
-              />
-              <br />
-              In this mode of operation, after dropping the physical anchor:
-              <ol>
-                <li>Check <b>Set Radius</b>.</li>
-                <li>Set the desired alarm radius (in meters).</li>
-                <li>Slide the toggle to <b>Drop</b></li>
-              </ol>
-            </div>
-            <div style="padding-left: 15px">
-              <h5>3. Manual set (calculated radius using rode length)</h5>
-              <img
-                src="./img/anchor_watch_3.png"
-                style="max-width: 250px"
-                alt=""
-              />
-              <br />
-              In this mode of operation, after dropping the anchor, and letting
-              out the rode:
-              <ol>
-                <li>Check the box next to the <b>Manual Set</b> button.</li>
-                <li>Set the rode length (in meters).</li>
-                <li>Click the <b>Manual Set</b> button.</li>
-              </ol>
-            </div>
-            <div>
-              Once set the anchor position and alarm radius are displayed on the
-              map.
-              <br />
-              <img
-                src="./img/anchor_circle.png"
-                style="max-width: 250px"
-                alt=""
-              />
-            </div>
             <div>
               <p>
-                The alarm radius can be adjusted by moving the
-                <b>Set Radius</b> slider to the desired distance.
-              </p>
-              <img
-                src="./img/anchor_watch_adjust.png"
-                style="max-width: 250px"
-                alt=""
-              />
-              <br />
-              The <b>Anchor Position</b> can be shifted by using the arrow
-              buttons <b>OR</b> on the map:
-              <ul>
-                <li>Click the anchor icon (to enter modify mode)</li>
-                <li>Drag the anchor feature to the new location.</li>
-                <li>Click <b>Finish</b> to exit modify mode.</li>
-              </ul>
-            </div>
-
-            <div>
-              <p>
-                When the server calculates that the maxumum radius has been
+                When the server calculates that the alarm radius has been
                 exceeded it sends a notification which triggers the alarm
                 message.
               </p>
@@ -2278,36 +2172,6 @@
           >
           <ul>
             <li>
-              <b>Instrument Panel App</b>: Select from a list of installed
-              applications the one you wish to be displayed in the Instrument
-              Panel.<br />
-              <i
-                >Note: The application selected should be responsive to display
-                correctly within the space afforded by the instrument panel.
-              </i>
-            </li>
-            <li>
-              <b>Parameters</b>: Enter parameters that will be appended to the
-              Instrument App url.
-            </li>
-            <li>
-              <b>Halt App on hide</b>: When checked the selected Intrument Panel
-              App will be stopped when the Panel is hidden.<br />
-              <i
-                >To save resources on your device when the instrument panel is
-                hidden clear this checkbox.</i
-              >
-            </li>
-            <li>
-              <b>Favourites</b>: Use this to display a list of Web Apps
-              installed on the Signal K Server which can then be selected as a
-              <i>Favourite</i>.<br />
-              These selected Web App can be "switched in" for display in the
-              <i>Instrument Panel</i>.
-            </li>
-          </ul>
-          <ul>
-            <li>
               <b>Do not Play Sounds</b>: Check this box if you do not want any
               sounds played.
               <i>(Overrides ALARM_METHOD in notification message.)</i>
@@ -2545,10 +2409,6 @@
               equi-distant circles on the map centered around the vessel. The
               distance between the circles will vary based on the map zoom level
               and is displayed next to the vessel.
-            </li>
-            <li>
-              <b>Display Range Circles</b>: Select to display range circles
-              around the vessel.
             </li>
             <li>
               <b>Heading Line Length</b>: Select length of heading line
@@ -2828,7 +2688,10 @@
           This section allows you to set the default RADAR device to use when
           there are multiple RADAR devices available.<br />
           Click the <b>REFRESH</b> button to fetch the list of RADARs from the
-          Signal K Server.
+          Signal K Server.<br />
+          <b>Draw range circles at the radar range while it transmits</b>:
+          Select to draw range circles at the RADAR range around the vessel
+          while the RADAR transmits, in place of the vessel range circles.
           <hr />
 
           <b>SIGNAL K:</b><br />

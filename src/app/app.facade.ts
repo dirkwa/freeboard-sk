@@ -1,7 +1,14 @@
 /** Application Information Service **
  * perform version checking etc. here
  * ************************************/
-import { effect, inject, Injectable, isDevMode, signal } from '@angular/core';
+import {
+  computed,
+  effect,
+  inject,
+  Injectable,
+  isDevMode,
+  signal
+} from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
 import { MatIconRegistry } from '@angular/material/icon';
 import { MatDialog } from '@angular/material/dialog';
@@ -256,6 +263,7 @@ export class AppFacade extends InfoService {
     buddyList: boolean;
     tidalApi: boolean;
     tracksApi: boolean;
+    trackStore: boolean;
   }>({
     anchorApi: true, // default true until API is available
     autopilotApi: false,
@@ -267,8 +275,14 @@ export class AppFacade extends InfoService {
     infoLayers: false, // legacy Overlays collection present (#784 signpost)
     buddyList: false,
     tidalApi: false,
-    tracksApi: false // v2 Track API with a registered provider (#820)
+    tracksApi: false, // v2 Track API with a registered provider (#820)
+    trackStore: false // Track API holds Freeboard's tracks (lists imports)
   });
+
+  /** Freeboard can store tracks: in the Track API or /resources/tracks. */
+  readonly tracksAvailable = computed(
+    () => this.featureFlags().resourceTracks || this.featureFlags().trackStore
+  );
 
   /** Where recorded tracks come from; null until detected at connect. */
   trackSource = signal<TrackSource | null>(null);

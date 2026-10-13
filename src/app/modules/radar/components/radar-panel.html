@@ -200,18 +200,19 @@
             (change)="setNumber(c, $event)"
           />
         </mat-form-field>
-        } @case ('area') { @if (isGuardZone(c)) { @let edit = zoneEdit.edit();
-        @let editing = edit?.controlId === c.id;
+        } @case ('area') { @if (isZone(c)) { @let edit = zoneEdit.edit(); @let
+        editing = edit?.controlId === c.id;
         <div class="zone-edit">
           @if (editing) {
           <span class="zone-hint"
-            >{{ edit.mode === 'draw' ? 'Drag across the chart from one corner of
-            the zone to the other.' : 'Drag the handles on the chart to adjust
-            the zone.' }}</span
+            >{{ edit.mode !== 'draw' ? 'Drag the handles on the chart to adjust
+            it.' : edit.kind === 'sector' ? 'Drag across the chart from one edge
+            of the sector to the other.' : 'Drag across the chart from one
+            corner of the zone to the other.' }}</span
           >
           @if (edit.zone; as z) {
           <div class="zone-fields">
-            @for (f of zoneFields; track f.key) {
+            @for (f of fieldsFor(c); track f.key) {
             <mat-form-field subscriptSizing="dynamic" floatLabel="always">
               <mat-label>{{ f.label }} ({{ zoneUnit(f.key) }})</mat-label>
               <input
@@ -268,6 +269,7 @@
             >
               Edit
             </button>
+            @if (!isSector(c)) {
             <button
               mat-button
               [disabled]="disabled || !!edit || !hasZone(c)"
@@ -275,6 +277,7 @@
             >
               Clear
             </button>
+            }
           </div>
           }
         </div>

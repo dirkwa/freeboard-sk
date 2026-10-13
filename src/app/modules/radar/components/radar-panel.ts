@@ -26,12 +26,22 @@ import {
   rangeOptions,
   SectionControl
 } from '../radar-controls';
-import { GuardZone, guardZoneFromControl } from '../guard-zones';
+import {
+  GuardZone,
+  isGuardZoneControl,
+  isNoTransmitSectorControl
+} from '../guard-zones';
 import { GuardZoneEditService } from '../guard-zone-edit.service';
 import { dragHandle, ZoneHandle } from '../guard-zone-edit';
 import { Convert, TARGET_UNIT } from 'src/app/lib/convert';
 
 type ZoneField = 'startAngle' | 'endAngle' | 'startDistance' | 'endDistance';
+interface ZoneFieldDef {
+  key: ZoneField;
+  label: string;
+  name: string;
+  step: number;
+}
 const FIELD_HANDLES: Record<ZoneField, ZoneHandle> = {
   startAngle: 'startAngle',
   endAngle: 'endAngle',
@@ -69,12 +79,7 @@ export class RadarPanel {
   protected radarApi = inject(RadarAPIService);
   protected zoneEdit = inject(GuardZoneEditService);
 
-  protected readonly zoneFields: Array<{
-    key: ZoneField;
-    label: string;
-    name: string;
-    step: number;
-  }> = [
+  protected readonly zoneFields: ZoneFieldDef[] = [
     { key: 'startAngle', label: 'From', name: 'From bearing', step: 1 },
     { key: 'endAngle', label: 'To', name: 'To bearing', step: 1 },
     {
@@ -221,12 +226,27 @@ export class RadarPanel {
     this.send(c.id, {});
   }
 
-  protected isGuardZone(c: SectionControl): boolean {
-    return c.def.dataType === 'zone' && c.id.startsWith('guardZone');
+  /** A guard zone or a no-transmit sector, drawn and edited on the chart. */
+  protected isZone(c: SectionControl): boolean {
+    return (
+      isGuardZoneControl(c.id, c.def.dataType) ||
+      isNoTransmitSectorControl(c.id, c.def.dataType)
+    );
+  }
+
+  protected isSector(c: SectionControl): boolean {
+    return isNoTransmitSectorControl(c.id, c.def.dataType);
+  }
+
+  /** A sector has bearings only. */
+  protected fieldsFor(c: SectionControl): ZoneFieldDef[] {
+    return this.isSector(c)
+      ? this.zoneFields.filter((f) => f.key.endsWith('Angle'))
+      : this.zoneFields;
   }
 
   protected hasZone(c: SectionControl): boolean {
-    return guardZoneFromControl(this.values().get(c.id)) !== undefined;
+    return this.zoneEdit.storedZone(c.id) !== undefined;
   }
 
   protected setZoneEnabled(c: SectionControl, enabled: boolean) {

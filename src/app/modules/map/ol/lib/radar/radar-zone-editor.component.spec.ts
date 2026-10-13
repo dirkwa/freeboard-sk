@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MapBrowserEvent } from 'ol';
 import PointerInteraction from 'ol/interaction/Pointer';
+import VectorLayer from 'ol/layer/Vector';
 import { fromLonLat } from 'ol/proj';
 import { RadarZoneEditorComponent } from './radar-zone-editor.component';
 import { MapComponent } from '../map.component';
@@ -50,6 +51,15 @@ describe('RadarZoneEditorComponent', () => {
     return fixture;
   }
 
+  /** The handles the editor shows, by name. */
+  function handles(): string[] {
+    const layer = map.addLayer.mock.calls.at(-1)[0] as VectorLayer;
+    return layer
+      .getSource()
+      .getFeatures()
+      .map((f) => f.get('handle'));
+  }
+
   /** A pointer event at a bearing from the bow and a distance in metres,
    *  `pixel` standing in for where it is on the screen. */
   function pointer(
@@ -86,6 +96,7 @@ describe('RadarZoneEditorComponent', () => {
     const edit: ZoneEdit = {
       radarId: 'fur6424A',
       controlId: 'guardZone1',
+      kind: 'zone',
       mode: 'draw',
       zone: stored
     };
@@ -149,6 +160,7 @@ describe('RadarZoneEditorComponent', () => {
     const edit: ZoneEdit = {
       radarId: 'fur6424A',
       controlId: 'guardZone1',
+      kind: 'zone',
       mode: 'edit',
       zone: stored
     };
@@ -158,6 +170,26 @@ describe('RadarZoneEditorComponent', () => {
       expect(pointer('pointerdown', 0, 600, [100, 100])).toBe(true);
       pointer('pointerdrag', 0, 1500, [100, 40]);
       expect(changes).toEqual([]);
+    });
+
+    it('gives a zone a handle for each bearing and each distance', () => {
+      open(edit);
+      expect(handles()).toEqual([
+        'startAngle',
+        'endAngle',
+        'innerDist',
+        'outerDist'
+      ]);
+    });
+
+    it('gives a no-transmit sector handles for its bearings only', () => {
+      open({
+        ...edit,
+        controlId: 'noTransmitSector1',
+        kind: 'sector',
+        zone: { ...stored, startDistance: 0 }
+      });
+      expect(handles()).toEqual(['startAngle', 'endAngle']);
     });
 
     it('moves the handle under the finger', () => {

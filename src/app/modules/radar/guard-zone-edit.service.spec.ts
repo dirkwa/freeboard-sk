@@ -216,4 +216,96 @@ describe('GuardZoneEditService', () => {
     TestBed.tick();
     expect(service.edit()).toBeUndefined();
   });
+
+  describe('no-transmit sectors', () => {
+    const deg = (d: number) => (d * Math.PI) / 180;
+    const sectorDef = {
+      id: 40,
+      name: 'No transmit sector 1',
+      description: '',
+      category: 'installation',
+      dataType: 'sector',
+      minValue: -Math.PI,
+      maxValue: Math.PI,
+      stepValue: deg(1)
+    };
+    const sector: ControlValue = {
+      value: deg(100),
+      endValue: deg(130),
+      enabled: false
+    };
+
+    beforeEach(() => {
+      radar.update((r) => ({
+        ...r,
+        capabilities: {
+          controls: {
+            ...r.capabilities.controls,
+            noTransmitSector1: sectorDef
+          }
+        } as unknown as CapabilityManifest,
+        controls: new Map(r.controls)
+          .set('range', { value: 3704 })
+          .set('noTransmitSector1', sector)
+      }));
+    });
+
+    it('leaves a sector switched off off the chart, until it is edited', () => {
+      expect(shown('noTransmitSector1')).toBeUndefined();
+      service.editZone('noTransmitSector1');
+      expect(service.edit().kind).toBe('sector');
+      expect(shown('noTransmitSector1')).toEqual({
+        startAngle: deg(100),
+        endAngle: deg(130),
+        startDistance: 0,
+        endDistance: 3704,
+        enabled: false
+      });
+    });
+
+    it('keeps a drawn sector reaching out to the radar range', () => {
+      service.draw('noTransmitSector1');
+      service.drawn(drawn);
+      expect(service.edit().zone).toEqual({
+        startAngle: drawn.startAngle,
+        endAngle: drawn.endAngle,
+        startDistance: 0,
+        endDistance: 3704,
+        enabled: true
+      });
+    });
+
+    it('saves the bearings only, on the radar step', async () => {
+      service.editZone('noTransmitSector1');
+      service.update({
+        ...service.edit().zone,
+        startAngle: deg(99.6),
+        enabled: true
+      });
+      await service.save();
+      expect(setControl).toHaveBeenCalledWith('fur6424A', 'noTransmitSector1', {
+        value: expect.closeTo(deg(100)),
+        endValue: expect.closeTo(deg(130)),
+        enabled: true
+      });
+      expect(shown('noTransmitSector1').enabled).toBe(true);
+    });
+
+    it('switches a sector on as the radar holds it', async () => {
+      await service.setEnabled('noTransmitSector1', true);
+      expect(setControl).toHaveBeenCalledWith('fur6424A', 'noTransmitSector1', {
+        value: expect.closeTo(deg(100)),
+        endValue: expect.closeTo(deg(130)),
+        enabled: true
+      });
+      expect(shown('noTransmitSector1').enabled).toBe(true);
+    });
+
+    it('takes a sector switched off off the chart once it is saved', async () => {
+      report('noTransmitSector1', { ...sector, enabled: true });
+      expect(shown('noTransmitSector1')).toBeDefined();
+      await service.setEnabled('noTransmitSector1', false);
+      expect(shown('noTransmitSector1')).toBeUndefined();
+    });
+  });
 });

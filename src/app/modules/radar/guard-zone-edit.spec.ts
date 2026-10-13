@@ -6,11 +6,14 @@ import {
   limitZone,
   MIN_ZONE_DEPTH,
   normalizeAngle,
+  sectorControlValue,
+  sectorForControl,
   toRadarPolar,
   zoneFromDrag,
   zoneSweep
 } from './guard-zone-edit';
 import { GuardZone } from './guard-zones';
+import { ControlDef } from './radar-api.service';
 
 const deg = (d: number) => (d * Math.PI) / 180;
 const POSITION: [number, number] = [5, 52];
@@ -151,5 +154,57 @@ describe('limitZone', () => {
 
   it('leaves the zone alone without a reach', () => {
     expect(limitZone(zone, undefined)).toBe(zone);
+  });
+});
+
+describe('sectorForControl', () => {
+  const sector: GuardZone = {
+    startAngle: deg(-20.4),
+    endAngle: deg(15.2),
+    startDistance: 0,
+    endDistance: 1852,
+    enabled: true
+  };
+  const def = (minValue: number, maxValue: number, step: number) =>
+    ({
+      dataType: 'sector',
+      minValue: deg(minValue),
+      maxValue: deg(maxValue),
+      stepValue: deg(step)
+    }) as ControlDef;
+
+  it('puts the bearings on the radar step', () => {
+    const s = sectorForControl(sector, def(-180, 180, 1));
+    expect(s.startAngle).toBeCloseTo(deg(-20));
+    expect(s.endAngle).toBeCloseTo(deg(15));
+  });
+
+  it('counts the bearings the way the radar does', () => {
+    // a Raymarine Quantum takes 0..359°, in tenths
+    const s = sectorForControl(sector, def(0, 359, 0.1));
+    expect(s.startAngle).toBeCloseTo(deg(339.6));
+    expect(s.endAngle).toBeCloseTo(deg(15.2));
+  });
+
+  it('keeps a bearing the radar cannot take at its limit', () => {
+    const s = sectorForControl(
+      { ...sector, startAngle: deg(-0.6) },
+      def(0, 359, 0.1)
+    );
+    expect(s.startAngle).toBeCloseTo(deg(359));
+  });
+
+  it('leaves the bearings alone for a radar that reports no limits', () => {
+    expect(sectorForControl(sector, undefined)).toEqual(sector);
+  });
+});
+
+describe('sectorControlValue', () => {
+  it('sends the bearings only', () => {
+    expect(sectorControlValue({ ...zone, enabled: false })).toEqual({
+      value: zone.startAngle,
+      endValue: zone.endAngle,
+      enabled: false
+    });
   });
 });

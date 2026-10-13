@@ -1,18 +1,32 @@
 import { computed, effect, inject, Injectable, signal } from '@angular/core';
-import { RadarAPIService } from './radar-api.service';
+import { ActiveRadar, RadarAPIService } from './radar-api.service';
 import {
   GuardZone,
   guardZoneFromControl,
   radarGuardZones,
-  RadarGuardZone
+  RadarGuardZone,
+  radarNoTransmitSectors,
+  sectorFromControl,
+  sectorReach
 } from './guard-zones';
-import { limitZone, zoneControlValue } from './guard-zone-edit';
+import {
+  limitZone,
+  sectorControlValue,
+  sectorForControl,
+  zoneControlValue
+} from './guard-zone-edit';
 
-/** A guard zone being drawn or edited on the chart. While drawing, `zone` is
- *  the zone the radar holds until the user drags out a new one. */
+/** A guard zone, or a no-transmit sector: a zone with bearings only, which
+ *  reaches from the radar out to its range. */
+export type ZoneKind = 'zone' | 'sector';
+
+/** A guard zone or no-transmit sector being drawn or edited on the chart.
+ *  While drawing, `zone` is the one the radar holds until the user drags out
+ *  a new one. */
 export interface ZoneEdit {
   radarId: string;
   controlId: string;
+  kind: ZoneKind;
   mode: 'draw' | 'edit';
   zone: GuardZone | undefined;
 }
@@ -38,6 +52,22 @@ const CLEARED_ZONE: GuardZone = {
   enabled: false
 };
 
+function kindOf(radar: ActiveRadar | undefined, controlId: string): ZoneKind {
+  return radar?.capabilities?.controls?.[controlId]?.dataType === 'sector'
+    ? 'sector'
+    : 'zone';
+}
+
+function storedIn(
+  radar: ActiveRadar | undefined,
+  controlId: string
+): GuardZone | undefined {
+  const value = radar?.controls?.get(controlId);
+  return kindOf(radar, controlId) === 'sector'
+    ? sectorFromControl(value, sectorReach(radar))
+    : guardZoneFromControl(value);
+}
+
 function sameZone(a: GuardZone | undefined, b: GuardZone): boolean {
   return (
     !!a &&
@@ -50,10 +80,10 @@ function sameZone(a: GuardZone | undefined, b: GuardZone): boolean {
 }
 
 /**
- * Drawing and editing the guard zones of the selected radar. The radar holds
- * the zones; this keeps only the zone being edited, and a saved zone until
- * the radar reports it back, so the chart does not jump back to the old one
- * in between.
+ * Drawing and editing the guard zones and no-transmit sectors of the selected
+ * radar. The radar holds them; this keeps only the one being edited, and a
+ * saved one until the radar reports it back, so the chart does not jump back
+ * to the old one in between.
  */
 @Injectable({ providedIn: 'root' })
 export class GuardZoneEditService {
@@ -67,25 +97,29 @@ export class GuardZoneEditService {
   // newer change leaves the newer change's state alone
   private latestChange = 0;
 
-  /** The zones to draw: the radar's, with the edited or just saved zone in
-   *  place of its stored value. */
+  /** The zones and switched-on sectors to draw: the radar's, with the edited
+   *  or just saved one in place of its stored value. */
   readonly zones = computed<RadarGuardZone[]>(() => {
     const radar = this.radarApi.radar();
     const id = radar?.device?.id;
-    const zones = radarGuardZones(radar);
+    const zones = [...radarGuardZones(radar), ...radarNoTransmitSectors(radar)];
     const edit = this._edit();
     const pending = this.pending();
-    const override =
-      edit?.radarId === id && edit.zone
-        ? { id: edit.controlId, zone: edit.zone }
-        : pending?.radarId === id
-          ? { id: pending.controlId, zone: pending.zone }
-          : undefined;
+    const editing = edit?.radarId === id && !!edit.zone;
+    const override = editing
+      ? { id: edit.controlId, zone: edit.zone }
+      : pending?.radarId === id
+        ? { id: pending.controlId, zone: pending.zone }
+        : undefined;
     if (!override) {
       return zones;
     }
-    return [...zones.filter((z) => z.id !== override.id), override].sort(
-      (a, b) => a.id.localeCompare(b.id)
+    const others = zones.filter((z) => z.id !== override.id);
+    // a sector switched off is left off the chart unless it is being edited
+    const shown =
+      editing || override.zone.enabled || kindOf(radar, override.id) === 'zone';
+    return (shown ? [...others, override] : others).sort((a, b) =>
+      a.id.localeCompare(b.id)
     );
   });
 
@@ -96,10 +130,7 @@ export class GuardZoneEditService {
       if (
         pending &&
         (radar?.device?.id !== pending.radarId ||
-          sameZone(
-            guardZoneFromControl(radar.controls?.get(pending.controlId)),
-            pending.zone
-          ))
+          sameZone(storedIn(radar, pending.controlId), pending.zone))
       ) {
         this.clearPending();
       }
@@ -114,11 +145,10 @@ export class GuardZoneEditService {
     });
   }
 
-  /** The stored zone of a guard zone control of the selected radar. */
+  /** The stored zone of a guard zone or sector control of the selected
+   *  radar. */
   storedZone(controlId: string): GuardZone | undefined {
-    return guardZoneFromControl(
-      this.radarApi.radar()?.controls?.get(controlId)
-    );
+    return storedIn(this.radarApi.radar(), controlId);
   }
 
   /** Start drawing a zone: the next drag on the chart replaces it. */
@@ -132,7 +162,8 @@ export class GuardZoneEditService {
   }
 
   private start(controlId: string, mode: ZoneEdit['mode']) {
-    const radarId = this.radarApi.radar()?.device?.id;
+    const radar = this.radarApi.radar();
+    const radarId = radar?.device?.id;
     if (!radarId) {
       return;
     }
@@ -141,19 +172,37 @@ export class GuardZoneEditService {
       current?.controlId === controlId && current.radarId === radarId
         ? current.zone
         : this.storedZone(controlId);
-    this._edit.set({ radarId, controlId, mode, zone });
+    const kind = kindOf(radar, controlId);
+    this._edit.set({ radarId, controlId, kind, mode, zone });
   }
 
   /** Replace the edited zone, e.g. while a handle is dragged. */
   update(zone: GuardZone) {
-    this._edit.update((e) => (e ? { ...e, zone } : e));
+    this._edit.update((e) => (e ? { ...e, zone: this.shape(e, zone) } : e));
   }
 
   /** A drawn zone is armed and goes on to be adjusted through its handles. */
   drawn(zone: GuardZone) {
     this._edit.update((e) =>
-      e ? { ...e, mode: 'edit', zone: { ...zone, enabled: true } } : e
+      e
+        ? {
+            ...e,
+            mode: 'edit',
+            zone: this.shape(e, { ...zone, enabled: true })
+          }
+        : e
     );
+  }
+
+  /** A sector keeps reaching out to the radar range, however it was drawn. */
+  private shape(edit: ZoneEdit, zone: GuardZone): GuardZone {
+    return edit.kind === 'sector'
+      ? {
+          ...zone,
+          startDistance: 0,
+          endDistance: sectorReach(this.radarApi.radar())
+        }
+      : zone;
   }
 
   cancel() {
@@ -221,14 +270,18 @@ export class GuardZoneEditService {
     zone: GuardZone,
     change: number
   ) {
-    const def = this.radarApi.radar()?.capabilities?.controls?.[controlId];
-    const value = limitZone(zone, def?.maxDistance);
+    const radar = this.radarApi.radar();
+    const def = radar?.capabilities?.controls?.[controlId];
+    const sector = kindOf(radar, controlId) === 'sector';
+    const value = sector
+      ? sectorForControl(zone, def)
+      : limitZone(zone, def?.maxDistance);
     this.setPending({ radarId, controlId, zone: value });
     try {
       await this.radarApi.setControl(
         radarId,
         controlId,
-        zoneControlValue(value)
+        sector ? sectorControlValue(value) : zoneControlValue(value)
       );
     } catch (err) {
       if (change === this.latestChange) {

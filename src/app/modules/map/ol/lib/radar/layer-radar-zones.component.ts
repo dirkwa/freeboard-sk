@@ -21,18 +21,27 @@ import {
   RadarGuardZone
 } from 'src/app/modules/radar/guard-zones';
 
-// The colours the MaYaRa radar GUI draws its two guard zones in, so a zone
-// reads the same on the chart as on the radar screen.
+// The colours the MaYaRa radar GUI draws its two guard zones and its
+// no-transmit sectors in, so a zone reads the same on the chart as on the
+// radar screen.
 const ZONE_COLOURS: Record<string, [number, number, number]> = {
   guardZone1: [0, 128, 0],
   guardZone2: [0, 0, 255]
 };
+const SECTOR_COLOUR: [number, number, number] = [200, 200, 0];
 const DEFAULT_COLOUR: [number, number, number] = [0, 128, 0];
 
-/** The style of a guard zone: filled while it is armed, a dashed outline
- *  while it is switched off. */
+function zoneColour(id: string): [number, number, number] {
+  return (
+    ZONE_COLOURS[id] ??
+    (id.startsWith('noTransmitSector') ? SECTOR_COLOUR : DEFAULT_COLOUR)
+  );
+}
+
+/** The style of a guard zone or sector: filled while it is on, a dashed
+ *  outline while it is switched off. */
 export function guardZoneStyle(zone: RadarGuardZone): Style {
-  const [r, g, b] = ZONE_COLOURS[zone.id] ?? DEFAULT_COLOUR;
+  const [r, g, b] = zoneColour(zone.id);
   return zone.zone.enabled
     ? new Style({
         fill: new Fill({ color: `rgba(${r}, ${g}, ${b}, 0.15)` }),

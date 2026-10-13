@@ -1,5 +1,6 @@
 import { computeDestinationPoint } from 'geolib';
 import { ActiveRadar, ControlValue } from './radar-api.service';
+import { radarRange } from './range-rings';
 
 /** A guard zone: an annular sector around the radar, its bearings relative
  *  to the bow (radians, clockwise) and its distances in metres. Equal start
@@ -13,7 +14,7 @@ export interface GuardZone {
 }
 
 export interface RadarGuardZone {
-  /** control id, e.g. `guardZone1` */
+  /** control id, e.g. `guardZone1` or `noTransmitSector1` */
   id: string;
   zone: GuardZone;
 }
@@ -22,6 +23,9 @@ export interface RadarGuardZone {
 export type LonLat = [number, number];
 
 const GUARD_ZONE_PREFIX = 'guardZone';
+const NO_TRANSMIT_SECTOR_PREFIX = 'noTransmitSector';
+// how far a no-transmit sector is drawn when the radar reports no range
+const DEFAULT_SECTOR_REACH = 1852;
 // a sector whose ends are closer than this (radians) is the full ring; the
 // same tolerance as the MaYaRa radar's ZONE_ANGLE_EPSILON, so the chart
 // draws the zone its ARPA detector applies
@@ -59,6 +63,50 @@ export function guardZoneFromControl(
   };
 }
 
+/** True for a guard zone control. */
+export function isGuardZoneControl(id: string, dataType: string): boolean {
+  return id.startsWith(GUARD_ZONE_PREFIX) && dataType === 'zone';
+}
+
+/** True for a no-transmit sector control: bearings the radar does not
+ *  transmit on, e.g. where a mast or a mizzen blocks the beam. */
+export function isNoTransmitSectorControl(
+  id: string,
+  dataType: string
+): boolean {
+  return id.startsWith(NO_TRANSMIT_SECTOR_PREFIX) && dataType === 'sector';
+}
+
+/** How far out a no-transmit sector is drawn: the radar's range, since the
+ *  radar sees nothing on those bearings at any distance. */
+export function sectorReach(radar: ActiveRadar | undefined): number {
+  const range = radarRange(radar);
+  return range > 0 ? range : DEFAULT_SECTOR_REACH;
+}
+
+/** The sector a `sector` control value describes, as a zone from the radar
+ *  out to `reach` (m), or undefined when it has none: a sector never set has
+ *  no width. */
+export function sectorFromControl(
+  value: ControlValue | undefined,
+  reach: number
+): GuardZone | undefined {
+  if (
+    !isFiniteNumber(value?.value) ||
+    !isFiniteNumber(value.endValue) ||
+    Math.abs(value.endValue - value.value) < FULL_RING_TOLERANCE
+  ) {
+    return undefined;
+  }
+  return {
+    startAngle: value.value,
+    endAngle: value.endValue,
+    startDistance: 0,
+    endDistance: reach,
+    enabled: value.enabled === true
+  };
+}
+
 /** The guard zones of a radar, in control id order. */
 export function radarGuardZones(
   radar: ActiveRadar | undefined
@@ -67,11 +115,27 @@ export function radarGuardZones(
     return [];
   }
   return Object.entries(radar.capabilities.controls)
-    .filter(
-      ([id, def]) => id.startsWith(GUARD_ZONE_PREFIX) && def.dataType === 'zone'
-    )
+    .filter(([id, def]) => isGuardZoneControl(id, def.dataType))
     .map(([id]) => ({ id, zone: guardZoneFromControl(radar.controls.get(id)) }))
     .filter((z) => z.zone !== undefined)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** The no-transmit sectors a radar has switched on, in control id order. */
+export function radarNoTransmitSectors(
+  radar: ActiveRadar | undefined
+): RadarGuardZone[] {
+  if (!radar?.capabilities?.controls || !radar.controls) {
+    return [];
+  }
+  const reach = sectorReach(radar);
+  return Object.entries(radar.capabilities.controls)
+    .filter(([id, def]) => isNoTransmitSectorControl(id, def.dataType))
+    .map(([id]) => ({
+      id,
+      zone: sectorFromControl(radar.controls.get(id), reach)
+    }))
+    .filter((z) => z.zone?.enabled)
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 

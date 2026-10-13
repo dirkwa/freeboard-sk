@@ -4,7 +4,9 @@ import {
   GuardZone,
   guardZoneFromControl,
   guardZoneRings,
-  radarGuardZones
+  radarGuardZones,
+  radarNoTransmitSectors,
+  sectorFromControl
 } from './guard-zones';
 import {
   ActiveRadar,
@@ -130,6 +132,90 @@ describe('radarGuardZones', () => {
 
   it('is empty without a radar', () => {
     expect(radarGuardZones(undefined)).toEqual([]);
+  });
+});
+
+const sectorDef = (id: number): ControlDef => ({
+  id,
+  name: 'No transmit sector',
+  description: '',
+  category: 'installation',
+  dataType: 'sector'
+});
+
+describe('sectorFromControl', () => {
+  it('reaches from the radar out to the given distance', () => {
+    expect(
+      sectorFromControl({ value: deg(100), endValue: deg(130) }, 1500)
+    ).toEqual({
+      startAngle: deg(100),
+      endAngle: deg(130),
+      startDistance: 0,
+      endDistance: 1500,
+      enabled: false
+    });
+  });
+
+  it('has no sector where none was set', () => {
+    expect(sectorFromControl({ value: 0, endValue: 0 }, 1500)).toBeUndefined();
+    expect(sectorFromControl({ value: 0 }, 1500)).toBeUndefined();
+    expect(sectorFromControl(undefined, 1500)).toBeUndefined();
+  });
+});
+
+describe('radarNoTransmitSectors', () => {
+  const controls = {
+    noTransmitSector2: sectorDef(41),
+    noTransmitSector1: sectorDef(40),
+    guardZone1: zoneDef(16)
+  };
+
+  it('lists the sectors switched on, out to the radar range', () => {
+    const sectors = radarNoTransmitSectors(
+      radar(controls, {
+        range: { value: 3704 },
+        noTransmitSector1: {
+          value: deg(100),
+          endValue: deg(130),
+          enabled: true
+        },
+        noTransmitSector2: {
+          value: deg(200),
+          endValue: deg(220),
+          enabled: true
+        },
+        guardZone1: { value: 0, endValue: 1, endDistance: 800, enabled: true }
+      })
+    );
+    expect(sectors.map((s) => s.id)).toEqual([
+      'noTransmitSector1',
+      'noTransmitSector2'
+    ]);
+    expect(sectors[0].zone.endDistance).toBe(3704);
+  });
+
+  it('leaves out a sector switched off', () => {
+    expect(
+      radarNoTransmitSectors(
+        radar(controls, {
+          noTransmitSector1: { value: deg(100), endValue: deg(130) },
+          noTransmitSector2: { value: 0, endValue: 0, enabled: true }
+        })
+      )
+    ).toEqual([]);
+  });
+
+  it('still draws a sector when the radar reports no range', () => {
+    const [sector] = radarNoTransmitSectors(
+      radar(controls, {
+        noTransmitSector1: {
+          value: deg(100),
+          endValue: deg(130),
+          enabled: true
+        }
+      })
+    );
+    expect(sector.zone.endDistance).toBeGreaterThan(0);
   });
 });
 

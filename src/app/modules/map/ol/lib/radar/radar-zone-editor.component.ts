@@ -25,6 +25,7 @@ import {
   handlePositions,
   normalizeAngle,
   RadarPolar,
+  SECTOR_HANDLES,
   toRadarPolar,
   ZONE_HANDLES,
   ZoneHandle,
@@ -60,7 +61,8 @@ function pointerIdOf(e: MapBrowserEvent): number {
 // ** Freeboard radar guard zone editor component **
 // Draws a zone by dragging from one corner to the opposite one, and edits it
 // through handles for each bearing and each distance, as in the MaYaRa radar
-// GUI.
+// GUI. A no-transmit sector is drawn and edited the same way, with handles
+// for its bearings only.
 @Component({
   selector: 'ol-map > fb-radar-zone-editor',
   template: '<ng-content></ng-content>',
@@ -233,7 +235,8 @@ export class RadarZoneEditorComponent implements OnInit, OnChanges, OnDestroy {
       return [];
     }
     const at = handlePositions(zone);
-    return ZONE_HANDLES.map((handle) => {
+    const handles = this.edit.kind === 'sector' ? SECTOR_HANDLES : ZONE_HANDLES;
+    return handles.map((handle) => {
       const f = new Feature({
         geometry: new Point(
           fromLonLat(

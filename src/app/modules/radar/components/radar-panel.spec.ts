@@ -490,4 +490,112 @@ describe('RadarPanel', () => {
       );
     });
   });
+
+  describe('no-transmit sectors', () => {
+    const deg = (d: number) => (d * Math.PI) / 180;
+    const withSector = (value: ControlValue) =>
+      radar.update((r) => ({
+        ...r,
+        capabilities: {
+          ...r.capabilities,
+          controls: {
+            ...r.capabilities.controls,
+            noTransmitSector1: {
+              id: 40,
+              name: 'No transmit sector 1',
+              description: 'Bearings the radar does not transmit on',
+              category: 'installation',
+              dataType: 'sector',
+              hasEnabled: true,
+              minValue: -Math.PI,
+              maxValue: Math.PI,
+              stepValue: deg(1),
+              units: 'rad'
+            }
+          }
+        } as unknown as CapabilityManifest,
+        controls: new Map(r.controls).set('noTransmitSector1', value)
+      }));
+    const block = (el: HTMLElement) =>
+      control(el, 'No transmit sector 1').querySelector<HTMLElement>(
+        '.zone-edit'
+      );
+    const buttons = (el: HTMLElement) =>
+      Array.from(block(el).querySelectorAll<HTMLButtonElement>('button')).map(
+        (b) => b.textContent.trim()
+      );
+    const button = (el: HTMLElement, label: string) =>
+      Array.from(block(el).querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent.trim() === label
+      );
+    const sector: ControlValue = {
+      value: deg(100),
+      endValue: deg(130),
+      enabled: false
+    };
+
+    it('offers switching a sector on, drawing and editing it', () => {
+      withSector(sector);
+      const el: HTMLElement = open().nativeElement;
+      expect(buttons(el)).toEqual(['', 'Draw', 'Edit']);
+      expect(button(el, 'Edit').disabled).toBe(false);
+    });
+
+    it('offers drawing a sector the radar does not hold yet', () => {
+      withSector({ value: 0, endValue: 0, enabled: false });
+      const el: HTMLElement = open().nativeElement;
+      expect(button(el, 'Draw').disabled).toBe(false);
+      expect(button(el, 'Edit').disabled).toBe(true);
+      expect(
+        block(el).querySelector<HTMLButtonElement>('mat-slide-toggle button')
+          .disabled
+      ).toBe(true);
+    });
+
+    it('edits the bearings of a sector, not distances', () => {
+      withSector(sector);
+      const fixture = open();
+      const el: HTMLElement = fixture.nativeElement;
+      button(el, 'Edit').click();
+      fixture.detectChanges();
+
+      const labels = Array.from(
+        block(el).querySelectorAll<HTMLInputElement>('input[type="number"]')
+      ).map((i) => i.getAttribute('aria-label'));
+      expect(labels).toEqual(['From bearing', 'To bearing']);
+
+      const to = block(el).querySelector<HTMLInputElement>(
+        'input[aria-label="To bearing"]'
+      );
+      to.value = '140';
+      to.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      button(el, 'Save').click();
+
+      expect(api.setControl).toHaveBeenCalledWith(
+        'fur6424A',
+        'noTransmitSector1',
+        {
+          value: expect.closeTo(deg(100)),
+          endValue: expect.closeTo(deg(140)),
+          enabled: false
+        }
+      );
+    });
+
+    it('switches a sector on with its bearings', () => {
+      withSector(sector);
+      const el: HTMLElement = open().nativeElement;
+      block(el).querySelector<HTMLElement>('mat-slide-toggle button').click();
+      expect(api.setControl).toHaveBeenCalledWith(
+        'fur6424A',
+        'noTransmitSector1',
+        {
+          value: expect.closeTo(deg(100)),
+          endValue: expect.closeTo(deg(130)),
+          enabled: true
+        }
+      );
+    });
+  });
 });

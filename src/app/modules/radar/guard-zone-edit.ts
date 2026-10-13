@@ -1,5 +1,6 @@
 import { computeDestinationPoint, getGreatCircleBearing } from 'geolib';
 import { GuardZone, LonLat } from './guard-zones';
+import { ControlDef } from './radar-api.service';
 
 /** A point around the radar: bearing relative to the bow (radians,
  *  clockwise, -π..π) and distance (m). */
@@ -16,6 +17,9 @@ export const ZONE_HANDLES: ZoneHandle[] = [
   'innerDist',
   'outerDist'
 ];
+
+// a no-transmit sector has bearings only
+export const SECTOR_HANDLES: ZoneHandle[] = ['startAngle', 'endAngle'];
 
 // the thinnest zone a drag can make, as in the MaYaRa radar GUI
 export const MIN_ZONE_DEPTH = 50;
@@ -184,5 +188,41 @@ export function limitZone(zone: GuardZone, maxDistance?: number): GuardZone {
       0,
       Math.min(zone.startDistance, endDistance - MIN_ZONE_DEPTH)
     )
+  };
+}
+
+/** A bearing as the radar's control takes it: on its step, and turned into
+ *  its min..max (some radars count 0..2π, others -π..π). */
+function controlAngle(angle: number, def: ControlDef | undefined): number {
+  const step = def?.stepValue > 0 ? def.stepValue : 0;
+  let a = step ? Math.round(angle / step) * step : angle;
+  const min = Number(def?.minValue);
+  const max = Number(def?.maxValue);
+  if (Number.isFinite(min) && Number.isFinite(max)) {
+    if (a < min) a += FULL_TURN;
+    else if (a > max) a -= FULL_TURN;
+    a = Math.min(Math.max(a, min), max);
+  }
+  return a;
+}
+
+/** The sector with its bearings as the radar's control takes them. */
+export function sectorForControl(
+  zone: GuardZone,
+  def: ControlDef | undefined
+): GuardZone {
+  return {
+    ...zone,
+    startAngle: controlAngle(zone.startAngle, def),
+    endAngle: controlAngle(zone.endAngle, def)
+  };
+}
+
+/** The Radar API value of a no-transmit sector: bearings only. */
+export function sectorControlValue(zone: GuardZone) {
+  return {
+    value: zone.startAngle,
+    endValue: zone.endAngle,
+    enabled: zone.enabled
   };
 }

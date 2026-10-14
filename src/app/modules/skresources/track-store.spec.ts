@@ -4,7 +4,8 @@ import {
   isStoredTrack,
   storeTrackBody,
   toTrackFeature,
-  trackStoreItemPath
+  trackStoreItemPath,
+  trackVesselLabel
 } from './track-store';
 import { MultiLineStringFeature } from 'src/app/types';
 
@@ -76,6 +77,19 @@ describe('storeTrackBody', () => {
     const times = [['2026-10-01T08:00:00Z', '2026-10-01T08:01:00Z']];
     expect(storeTrackBody(feature, times).properties.coordTimes).toBe(times);
   });
+
+  it('keeps the vessel a track is stored for', () => {
+    const ctx = 'vessels.urn:mrn:imo:mmsi:123456789';
+    const own = {
+      ...feature,
+      properties: { ...feature.properties, context: ctx, isSelf: true }
+    };
+    expect(storeTrackBody(own).properties).toEqual({
+      name: 'Friend',
+      description: 'Shared GPX',
+      context: ctx
+    });
+  });
 });
 
 describe('stored tracks', () => {
@@ -136,5 +150,28 @@ describe('stored tracks', () => {
     expect(trackStoreItemPath('tracks:imported:a/b')).toBe(
       '/tracks/tracks%3Aimported%3Aa%2Fb'
     );
+  });
+});
+
+describe('trackVesselLabel', () => {
+  const ctx = 'vessels.urn:mrn:imo:mmsi:123456789';
+
+  it('names the own vessel', () => {
+    expect(trackVesselLabel({ context: ctx, isSelf: true })).toBe('Own Ship');
+  });
+
+  it('names another vessel by its name, else its MMSI, else its context', () => {
+    expect(trackVesselLabel({ context: ctx, contextName: 'Ariadne' })).toBe(
+      'AIS Ariadne'
+    );
+    expect(trackVesselLabel({ context: ctx })).toBe('AIS 123456789');
+    expect(
+      trackVesselLabel({ context: 'vessels.urn:mrn:signalk:uuid:x' })
+    ).toBe('vessels.urn:mrn:signalk:uuid:x');
+  });
+
+  it('gives no label for a track that names no vessel', () => {
+    expect(trackVesselLabel({ name: 'Friend' })).toBeUndefined();
+    expect(trackVesselLabel(undefined)).toBeUndefined();
   });
 });

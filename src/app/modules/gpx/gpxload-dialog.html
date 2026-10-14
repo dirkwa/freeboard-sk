@@ -228,6 +228,15 @@
           </div>
           }
         </div>
+        @if (app.featureFlags().trackStore && app.data.selfId) {
+        <mat-checkbox
+          [(ngModel)]="ownVessel"
+          matTooltip="Store the tracks as your own vessel's"
+          matTooltipPosition="below"
+        >
+          Tracks of my own vessel
+        </mat-checkbox>
+        }
       </mat-expansion-panel>
     </div>
     } }

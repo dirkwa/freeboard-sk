@@ -63,6 +63,8 @@ export class GPXImportDialog implements OnInit {
   public selectedRoute = null;
   public selWaypoints = [];
   public selTracks = [];
+  /** Store the selected tracks as the own vessel's (Track API only). */
+  public ownVessel = false;
 
   public display = {
     notValid: false,
@@ -322,6 +324,9 @@ export class GPXImportDialog implements OnInit {
       if (res.trk.selected[i]) {
         const gpxtrk = this.gpx.trk[i];
         const trk = this.transformTrack(gpxtrk);
+        if (this.ownVessel && this.app.data.selfId) {
+          trk.feature.properties['context'] = this.app.data.selfId;
+        }
         this.subCount++;
         try {
           const id = await this.skres.importTrack(

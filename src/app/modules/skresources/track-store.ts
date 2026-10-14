@@ -111,6 +111,26 @@ const DERIVED = new Set([
   'isSelf'
 ]);
 
+/** Whose track a stored track is, worded as the tracks plugin's own webapp
+ * words it, or undefined for a track that names no vessel. */
+export function trackVesselLabel(
+  properties: Record<string, unknown> | undefined
+): string | undefined {
+  const context = properties?.context;
+  if (typeof context !== 'string' || context === '') {
+    return undefined;
+  }
+  if (properties.isSelf === true) {
+    return 'Own Ship';
+  }
+  const name = properties.contextName;
+  if (typeof name === 'string' && name !== '') {
+    return `AIS ${name}`;
+  }
+  const mmsi = /urn:mrn:imo:mmsi:(\d+)$/.exec(context);
+  return mmsi ? `AIS ${mmsi[1]}` : context;
+}
+
 /** A stored track as the feature Freeboard draws, keyed by its Track API id. */
 export function toTrackFeature(
   f: StoredTrackFeature

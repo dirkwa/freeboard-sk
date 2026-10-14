@@ -20,7 +20,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 
 import { AppFacade } from 'src/app/app.facade';
 import { SKResourceService } from 'src/app/modules/skresources';
-import { isStoredTrack } from '../../track-store';
+import { isStoredTrack, trackVesselLabel } from '../../track-store';
 import { FBTrack, FBTracks, Position } from 'src/app/types';
 import { SKWorkerService } from 'src/app/modules';
 import { ResourceListBase } from '../resource-list-baseclass';
@@ -76,6 +76,8 @@ export class TrackListComponent extends ResourceListBase {
   }
 
   protected readonly isStored = (r: FBTrack) => isStoredTrack(r[1].feature);
+  protected readonly vessel = (r: FBTrack) =>
+    trackVesselLabel(r[1].feature.properties);
 
   ngOnInit() {
     this.initItems();

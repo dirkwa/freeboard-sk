@@ -82,6 +82,9 @@
               >
                 <b>{{r[1].feature.properties?.name || i}}</b>
               </div>
+              @if (vessel(r); as v) {
+              <div style="font-size: 10pt">{{ v }}</div>
+              }
               <remark
                 [processor]="mdProcessor"
                 style="

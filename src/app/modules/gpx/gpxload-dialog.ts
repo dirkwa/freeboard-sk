@@ -18,7 +18,10 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { AppFacade } from 'src/app/app.facade';
 import { SignalKClient } from 'signalk-client-angular';
 import { SKResourceService } from 'src/app/modules';
-import { coordTimesOf } from 'src/app/modules/skresources/track-store';
+import {
+  coordTimesOf,
+  isRecordedTrackId
+} from 'src/app/modules/skresources/track-store';
 import { SymbolService } from 'src/app/modules/icons';
 import {
   GPX,
@@ -334,7 +337,10 @@ export class GPXImportDialog implements OnInit {
             coordTimesOf((gpxtrk.trkseg ?? []).map((seg) => seg.trkpt))
           );
           this.subCount--;
-          trkIds.push(id);
+          // a recording is drawn as the trail and Track history, not listed
+          if (!isRecordedTrackId(id)) {
+            trkIds.push(id);
+          }
           this.app.debug('SUCCESS: Track added.');
           this.checkComplete();
         } catch (err) {

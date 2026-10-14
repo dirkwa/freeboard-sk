@@ -4,6 +4,7 @@ import {
   isStoredTrack,
   storeTrackBody,
   toTrackFeature,
+  isRecordedTrackId,
   trackStoreItemPath,
   trackVesselLabel
 } from './track-store';
@@ -173,5 +174,14 @@ describe('trackVesselLabel', () => {
   it('gives no label for a track that names no vessel', () => {
     expect(trackVesselLabel({ name: 'Friend' })).toBeUndefined();
     expect(trackVesselLabel(undefined)).toBeUndefined();
+  });
+});
+
+describe('isRecordedTrackId', () => {
+  it('tells a recording from an import', () => {
+    expect(
+      isRecordedTrackId('tracks:recorded:vessels.urn:mrn:imo:mmsi:1')
+    ).toBe(true);
+    expect(isRecordedTrackId('tracks:imported:0f0f')).toBe(false);
   });
 });

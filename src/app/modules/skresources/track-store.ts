@@ -111,6 +111,13 @@ const DERIVED = new Set([
   'isSelf'
 ]);
 
+/** Whether the store answered with the id of a vessel's recording
+ * (`<provider>:recorded:<context>`): the tracks plugin writes a timed track of
+ * the own vessel into its recording rather than keeping it as an import. */
+export function isRecordedTrackId(id: string): boolean {
+  return /^[^:]+:recorded:/.test(id);
+}
+
 /** Whose track a stored track is, worded as the tracks plugin's own webapp
  * words it, or undefined for a track that names no vessel. */
 export function trackVesselLabel(

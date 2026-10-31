@@ -192,7 +192,9 @@ function findPassage(
     return undefined;
   }
 
-  // the tapped point, as an index into pts
+  // the tapped point, as an index into pts: the nearer end of the tapped
+  // leg, or in a thinned track its start, where one leg can run from a stop
+  // to the next and its nearer end be the stop after it
   let k = 0;
   let bestD = Infinity;
   let offset = 0;
@@ -200,7 +202,8 @@ function findPassage(
     const near = nearestOnLine(line, at);
     if (near && near.d < bestD) {
       bestD = near.d;
-      k = offset + Math.min(near.index + Math.round(near.f), line.length - 1);
+      const step = track.thinned ? Math.floor(near.f) : Math.round(near.f);
+      k = offset + Math.min(near.index + step, line.length - 1);
     }
     offset += line.length;
   });

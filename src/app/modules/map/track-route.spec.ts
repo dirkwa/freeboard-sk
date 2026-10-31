@@ -384,10 +384,13 @@ describe('trackSectionRoute', () => {
       times: [places.map((_, i) => new Date(T0 + i * 420 * MIN).toISOString())],
       thinned: true
     };
-    const route = routeOf(track, at(A, 400, 0), OWN_STOP_MS);
+    // a tap on either half of the hop
+    [400, 600].forEach((east) => {
+      const route = routeOf(track, at(A, east, 0), OWN_STOP_MS);
 
-    expect(distM(route[0], A)).toBeLessThan(1);
-    expect(distM(route[route.length - 1], D)).toBeLessThan(1);
+      expect(distM(route[0], A)).toBeLessThan(1);
+      expect(distM(route[route.length - 1], D)).toBeLessThan(1);
+    });
   });
 
   it('gives the passage leaving a stop for a tap on the stop', () => {

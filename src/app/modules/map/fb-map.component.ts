@@ -246,6 +246,7 @@ import { TrackHistoryService } from 'src/app/modules/skstream/track-history.serv
 import { AIS_TRACK_MIN_ZOOM } from 'src/app/modules/skstream/track-source';
 import {
   fusedVessels,
+  isRadarTarget,
   locateTarget,
   TARGET_STALE_MS,
   unlinkedTargets
@@ -282,6 +283,8 @@ interface IFeatureData {
   sar: Map<string, SKSaR>;
   meteo: Map<string, SKMeteo>;
   targets: Map<string, SKSensorTarget>; // sensor targets not linked to a drawn boat
+  radarTargets: Map<string, SKSensorTarget>; // the radar ones among them
+  otherTargets: Map<string, SKSensorTarget>; // camera and other sensors
   self: SKVessel; //self vessel
   ais: Map<string, SKVessel>; // other vessels
   active: SKVessel; // focussed vessel
@@ -497,6 +500,8 @@ export class FBMapComponent implements OnInit, OnDestroy {
     sar: new Map(),
     meteo: new Map(),
     targets: new Map(),
+    radarTargets: new Map(),
+    otherTargets: new Map(),
     self: new SKVessel(), //self vessel
     ais: new Map(), // other vessels
     active: new SKVessel(), // focussed vessel
@@ -926,6 +931,14 @@ export class FBMapComponent implements OnInit, OnDestroy {
       this.app.data.targets,
       this.app.data.vessels.aisTargets,
       this.app.data.vessels.self
+    );
+    this.dfeat.radarTargets = new Map();
+    this.dfeat.otherTargets = new Map();
+    this.dfeat.targets.forEach((target, id) =>
+      (isRadarTarget(id)
+        ? this.dfeat.radarTargets
+        : this.dfeat.otherTargets
+      ).set(id, target)
     );
     this.dfeat.active = this.app.data.vessels.active;
     this.dfeat.navData.position = this.course.courseData().position;

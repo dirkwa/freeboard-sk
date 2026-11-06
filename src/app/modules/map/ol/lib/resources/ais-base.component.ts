@@ -28,6 +28,42 @@ import { Position } from 'src/app/types';
 export type SKTarget =
   SKVessel | SKAircraft | SKAtoN | SKSaR | SKMeteo | SKSensorTarget;
 
+/** The AIS target selections a layer applies. */
+export interface AisSelections {
+  filterIds?: Array<string> | null;
+  filterByShipType?: boolean;
+  filterShipTypes?: Array<number>;
+}
+
+/**
+ * Whether the AIS selections let target `id` be drawn: the chosen ship types
+ * when filtering by type, else the chosen targets, and in both cases the
+ * IMO-only (-999) and buddies-only (-998) sentinels.
+ */
+export function passesAisFilter(
+  id: string,
+  target: SKTarget | undefined,
+  filter: AisSelections
+): boolean {
+  const { filterIds, filterByShipType, filterShipTypes } = filter;
+  const checkImo = () =>
+    !(Array.isArray(filterShipTypes) && filterShipTypes.includes(-999)) ||
+    'imo' in (target as SKVessel).registrations;
+  const checkBuddy = () =>
+    !(Array.isArray(filterShipTypes) && filterShipTypes.includes(-998)) ||
+    (target as SKVessel).buddy === true;
+  const passesSentinelFilters = () => checkImo() && checkBuddy();
+
+  if (filterByShipType && Array.isArray(filterShipTypes)) {
+    const st = Math.floor((target?.type?.id ?? NaN) / 10) * 10;
+    return filterShipTypes.includes(st) && passesSentinelFilters();
+  }
+  if (Array.isArray(filterIds)) {
+    return filterIds.includes(id) && passesSentinelFilters();
+  }
+  return passesSentinelFilters();
+}
+
 // ** Signal K AIS Target Base Compnent  **
 /** A ship type's styles, one per vessel state (e.g. `moored`) plus `default`. */
 export type AISStateStyles = Record<string, Style>;
@@ -139,50 +175,11 @@ export class AISBaseLayerComponent
    * @returns true if target should be rendered
    */
   protected okToRenderTarget(id: string): boolean {
-    // IMO only
-    const checkImo = (id: string) => {
-      const imo =
-        Array.isArray(this.filterShipTypes) &&
-        this.filterShipTypes.includes(-999);
-      if (imo) {
-        const t = this.targets.get(id);
-        if ('imo' in (t as SKVessel).registrations) {
-          return true;
-        } else {
-          return false;
-        }
-      } else {
-        return true;
-      }
-    };
-
-    // Buddies only
-    const checkBuddy = (id: string) => {
-      const buddiesOnly =
-        Array.isArray(this.filterShipTypes) &&
-        this.filterShipTypes.includes(-998);
-      if (buddiesOnly) {
-        return (this.targets.get(id) as SKVessel).buddy === true;
-      } else {
-        return true;
-      }
-    };
-
-    const passesSentinelFilters = (id: string) =>
-      checkImo(id) && checkBuddy(id);
-
-    if (this.filterByShipType && Array.isArray(this.filterShipTypes)) {
-      const st = Math.floor((this.targets.get(id)?.type?.id ?? NaN) / 10) * 10;
-      return this.filterShipTypes.includes(st) && passesSentinelFilters(id);
-    }
-    if (!this.filterIds) {
-      return passesSentinelFilters(id);
-    }
-    if (Array.isArray(this.filterIds)) {
-      return this.filterIds.includes(id) && passesSentinelFilters(id);
-    } else {
-      return passesSentinelFilters(id);
-    }
+    return passesAisFilter(id, this.targets.get(id), {
+      filterIds: this.filterIds,
+      filterByShipType: this.filterByShipType,
+      filterShipTypes: this.filterShipTypes
+    });
   }
 
   /** Determine if target is stale

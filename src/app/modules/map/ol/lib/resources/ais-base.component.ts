@@ -46,12 +46,14 @@ export function passesAisFilter(
   filter: AisSelections
 ): boolean {
   const { filterIds, filterByShipType, filterShipTypes } = filter;
+  // a target can be gone already when its id is still listed as updated
+  const vessel = target as SKVessel | undefined;
   const checkImo = () =>
     !(Array.isArray(filterShipTypes) && filterShipTypes.includes(-999)) ||
-    'imo' in (target as SKVessel).registrations;
+    'imo' in (vessel?.registrations ?? {});
   const checkBuddy = () =>
     !(Array.isArray(filterShipTypes) && filterShipTypes.includes(-998)) ||
-    (target as SKVessel).buddy === true;
+    vessel?.buddy === true;
   const passesSentinelFilters = () => checkImo() && checkBuddy();
 
   if (filterByShipType && Array.isArray(filterShipTypes)) {

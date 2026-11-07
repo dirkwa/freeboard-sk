@@ -34,4 +34,13 @@ describe('passesAisFilter', () => {
     expect(passesAisFilter(ID, vessel(36, true), filter)).toBe(true);
     expect(passesAisFilter(ID, vessel(36), filter)).toBe(false);
   });
+
+  it('leaves out a target that is already gone instead of throwing', () => {
+    expect(passesAisFilter(ID, undefined, { filterShipTypes: [-999] })).toBe(
+      false
+    );
+    expect(passesAisFilter(ID, undefined, { filterShipTypes: [-998] })).toBe(
+      false
+    );
+  });
 });

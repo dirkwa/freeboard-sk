@@ -8,6 +8,8 @@ import {
 import { Feature } from 'ol';
 import { Style, Stroke, Fill, Circle, RegularShape } from 'ol/style';
 import { LineString, Point } from 'ol/geom';
+import { asString } from 'ol/color';
+import type { Coordinate } from 'ol/coordinate';
 import { toLonLat } from 'ol/proj';
 import { MapComponent } from '../map.component';
 import { fromLonLatArray, mapifyCoords } from '../util';
@@ -22,11 +24,15 @@ import {
   linkedWaypointId,
   PointLink
 } from './route-waypoint-overlap';
+import { drawRouteFlow, flowPhase } from './route-flow';
 
 /** Symbol ids used to override the default route marker shapes. */
 export const ROUTE_MARKER_START = 'route-start';
 export const ROUTE_MARKER_WAYPOINT = 'route-waypoint';
 export const ROUTE_MARKER_END = 'route-end';
+
+/** Redraw interval of the animated direction chevrons: ~12 fps keeps a Pi cool. */
+const FLOW_FRAME_MS = 80;
 
 // ** Freeboard resource collection format **
 @Component({
@@ -39,8 +45,13 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
   @Input() routeStyles?: { [key: string]: Style };
   @Input() activeRoute?: string | null;
   @Input() routes: FBRoutes = [];
+  /** The active route is followed from its last point to its first. */
+  @Input() activeReversed = false;
+  /** Move the direction chevrons along the routes. */
+  @Input() animateFlow = false;
 
   private leaveOverlap?: () => void;
+  private flowTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     protected override mapComponent: MapComponent,
@@ -58,9 +69,11 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
       this.leaveOverlap = joinOverlap(map, 'routes', this.source);
     }
     this.parseFBRoutes(this.routes);
+    this.syncFlowTimer();
   }
 
   override ngOnDestroy() {
+    this.stopFlowTimer();
     this.leaveOverlap?.();
     super.ngOnDestroy();
   }
@@ -74,6 +87,33 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
       } else if ('activeRoute' in changes) {
         this.onActivateRoute();
       }
+    } else if (this.source && 'activeReversed' in changes) {
+      this.source.changed();
+    }
+    if (this.source && ('routes' in changes || 'animateFlow' in changes)) {
+      this.syncFlowTimer();
+    }
+  }
+
+  /** Runs the redraw timer only while there is a route to animate. */
+  private syncFlowTimer() {
+    const wanted = this.animateFlow && this.routes.some((r) => r[2]);
+    if (!wanted) {
+      this.stopFlowTimer();
+      this.mapComponent.getMap()?.render();
+    } else if (!this.flowTimer) {
+      this.flowTimer = setInterval(() => {
+        if (!document.hidden) {
+          this.mapComponent.getMap()?.render();
+        }
+      }, FLOW_FRAME_MS);
+    }
+  }
+
+  private stopFlowTimer() {
+    if (this.flowTimer) {
+      clearInterval(this.flowTimer);
+      this.flowTimer = undefined;
     }
   }
 
@@ -137,7 +177,6 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
     const styles = [];
     const id = (feature.getId() as string).split('.').slice(-1)[0];
     const isActive = id === this.activeRoute;
-    let ptFill: Fill;
 
     if (typeof this.routeStyles === 'undefined') {
       if (this.layerProperties && this.layerProperties.style) {
@@ -156,17 +195,37 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
     }
 
     // line style
-    if (isActive && typeof this.routeStyles.active !== 'undefined') {
-      styles.push(this.routeStyles.active);
-      ptFill = new Fill({
-        color: this.routeStyles.active.getStroke()?.getColor()
-      });
-    } else {
-      styles.push(this.routeStyles.default.clone());
-      ptFill = new Fill({
-        color: this.routeStyles.default.getStroke()?.getColor()
-      });
-    }
+    const lineStyle =
+      isActive && typeof this.routeStyles.active !== 'undefined'
+        ? this.routeStyles.active
+        : this.routeStyles.default.clone();
+    styles.push(lineStyle);
+    const lineColor = lineStyle.getStroke()?.getColor();
+    const ptFill = new Fill({ color: lineColor });
+
+    // direction of travel: guide lines either side and chevrons along it
+    const flowColor = Array.isArray(lineColor)
+      ? asString(lineColor)
+      : typeof lineColor === 'string'
+        ? lineColor
+        : 'green';
+    const reverse = isActive && this.activeReversed;
+    const animate = this.animateFlow;
+    styles.push(
+      new Style({
+        renderer: (pixelCoords, state) =>
+          drawRouteFlow(
+            state.context,
+            pixelCoords as Coordinate[],
+            state.pixelRatio,
+            {
+              color: flowColor,
+              reverse,
+              phase: flowPhase(animate, performance.now())
+            }
+          )
+      })
+    );
 
     // External symbol overrides (null when no provider symbol is registered).
     // When present, an external symbol replaces the default drawn shape.
@@ -218,7 +277,7 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
               image: img
             })
           );
-        } else if (isActive) {
+        } else {
           styles.push(
             new Style({
               geometry: new Point(start),
@@ -229,29 +288,6 @@ export class FreeboardRouteLayerComponent extends FBFeatureLayerComponent {
                   color: 'white'
                 }),
                 fill: ptFill
-              })
-            })
-          );
-        } else {
-          const d = getRhumbLineBearing(
-            toLonLat(start) as GeolibInputCoordinates,
-            toLonLat(end) as GeolibInputCoordinates
-          );
-          const rotation = (d * Math.PI) / 180;
-          styles.push(
-            new Style({
-              geometry: new Point(start),
-              image: new RegularShape({
-                radius: 6,
-                stroke: new Stroke({
-                  width: 1,
-                  color: 'white'
-                }),
-                fill: ptFill,
-                points: 3,
-                angle: 0,
-                rotateWithView: true,
-                rotation: rotation
               })
             })
           );

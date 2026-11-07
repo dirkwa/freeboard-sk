@@ -838,22 +838,18 @@
             }
             <div class="alarmPanel">
               @for (n of notiMgr.alerts(); track n[0]) {
-                <span style="margin-bottom: 5px">
-                  <fb-alert
-                    [audioStatus]="audioStatus()"
-                    [alert]="n[1]"
-                    [acknowledged]="n[1].acknowledged"
-                    [silenced]="n[1].silenced"
-                    [doNotPlaySound]="app.config.display.muteSound"
-                    (nextPoint)="
-                      course.coursePointIndex(
-                        course.courseData().pointIndex + 1
-                      )
-                    "
-                    (routeEnd)="clearDestination()"
-                  >
-                  </fb-alert>
-                </span>
+                <fb-alert
+                  [audioStatus]="audioStatus()"
+                  [alert]="n[1]"
+                  [acknowledged]="n[1].acknowledged"
+                  [silenced]="n[1].silenced"
+                  [doNotPlaySound]="app.config.display.muteSound"
+                  (nextPoint)="
+                    course.coursePointIndex(course.courseData().pointIndex + 1)
+                  "
+                  (routeEnd)="clearDestination()"
+                >
+                </fb-alert>
               }
             </div>
           }

@@ -628,6 +628,7 @@ export class AppComponent {
         tooltip: 'Alarms',
         buttonClass: 'button-warn',
         badge: this.notiMgr.alerts().length,
+        pulse: this.notiMgr.alerts().some(([, a]) => !a.acknowledged),
         action: () => this.toggleAlertList(true)
       },
       {

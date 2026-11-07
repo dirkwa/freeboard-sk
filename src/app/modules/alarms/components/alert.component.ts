@@ -13,7 +13,7 @@ import {
 } from '@angular/core';
 
 import { MatButtonModule } from '@angular/material/button';
-import { MatCardModule } from '@angular/material/card';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { TimerButtonComponent } from './timer-button.component';
@@ -63,7 +63,7 @@ const SoundFiles: Partial<Record<ALARM_STATE, string>> = {
   imports: [
     MatIconModule,
     MatButtonModule,
-    MatCardModule,
+    MatTooltipModule,
     MatProgressBarModule,
     TimerButtonComponent
   ],
@@ -72,139 +72,166 @@ const SoundFiles: Partial<Record<ALARM_STATE, string>> = {
       <span></span>
     } @else {
       @if (alert().visual && !alert().acknowledged) {
-        <div>
+        <div class="alert-row" [class]="'alert-' + alert().priority">
+          <mat-icon
+            class="alert-icon {{ alert().icon.class }}"
+            [svgIcon]="alert().icon.svgIcon ?? ''"
+            >{{ alert().icon.name }}</mat-icon
+          >
+          <div class="alert-message" [title]="alert().message">
+            {{ alert().message }}
+          </div>
+          <div class="alert-actions">
+            @if (app.data.activeRoute) {
+              @let isLastPoint =
+                course.courseData().pointIndex ===
+                course.courseData().pointTotal - 1;
+              @if (
+                app.config.course.autoNextPointOnArrival &&
+                app.config.course.autoNextPointTrigger === alert().type
+              ) {
+                @if (isLastPoint) {
+                  <timer-button
+                    [disabled]="nextPointClicked"
+                    [icon]="'clear_all'"
+                    [label]="'End Route in'"
+                    [cancelledLabel]="'End Route'"
+                    [period]="app.config.course.autoNextPointDelay"
+                    (nextPoint)="endRoute()"
+                  >
+                  </timer-button>
+                } @else {
+                  <timer-button
+                    [disabled]="nextPointClicked"
+                    [icon]="'skip_next'"
+                    [label]="'Next point in'"
+                    [cancelledLabel]="'NEXT POINT'"
+                    [period]="app.config.course.autoNextPointDelay"
+                    (nextPoint)="gotoNextPoint()"
+                  >
+                  </timer-button>
+                }
+              } @else if (showStaticNextPoint) {
+                @if (isLastPoint) {
+                  <button
+                    mat-icon-button
+                    matTooltip="End route"
+                    [disabled]="nextPointClicked"
+                    (click)="endRoute()"
+                  >
+                    <mat-icon>clear_all</mat-icon>
+                  </button>
+                } @else {
+                  <button
+                    mat-icon-button
+                    matTooltip="Next point"
+                    [disabled]="nextPointClicked"
+                    (click)="gotoNextPoint()"
+                  >
+                    <mat-icon>skip_next</mat-icon>
+                  </button>
+                }
+              }
+            }
+            @if (alert().sound && alert().canSilence) {
+              <button
+                mat-icon-button
+                [matTooltip]="alert().silenced ? 'Muted' : 'Mute'"
+                [disabled]="alert().silenced"
+                (click)="muteAlarm()"
+              >
+                <mat-icon
+                  class="ob"
+                  [svgIcon]="
+                    alert().silenced
+                      ? 'sound-off-fill'
+                      : 'sound-unavailable-fill'
+                  "
+                ></mat-icon>
+              </button>
+            }
+            @if (alert().canAcknowledge) {
+              <button
+                mat-icon-button
+                matTooltip="Acknowledge"
+                (click)="ackAlarm()"
+              >
+                <mat-icon>check</mat-icon>
+              </button>
+            } @else {
+              <button mat-icon-button matTooltip="Dismiss" (click)="hide()">
+                <mat-icon>close</mat-icon>
+              </button>
+            }
+          </div>
           @if (!alert().canAcknowledge) {
             <mat-progress-bar
+              class="alert-timer"
               mode="determinate"
               [value]="progressValue()"
             ></mat-progress-bar>
           }
-          <mat-card style="padding:5px;border-radius:0;">
-            <mat-card-content>
-              <div style="display:flex; width:100%;">
-                <div style="width:35px;">
-                  <mat-icon
-                    [class]="this.alert().icon.class"
-                    [svgIcon]="this.alert().icon.svgIcon ?? ''"
-                    >{{ this.alert().icon.name }}</mat-icon
-                  >
-                </div>
-                <div
-                  style="overflow: hidden;
-                  display: -webkit-box;
-                  -webkit-box-orient: vertical;
-                  -webkit-line-clamp: 2;
-                  line-clamp: 2;
-                  text-overflow:ellipsis;"
-                >
-                  {{ alert().message }}
-                </div>
-              </div>
-            </mat-card-content>
-
-            <mat-card-actions>
-              <div style="display:flex;flex-wrap: wrap;">
-                @if (alert().sound && alert().canSilence) {
-                  <div style="text-align: left;">
-                    <button
-                      mat-raised-button
-                      (click)="muteAlarm()"
-                      [disabled]="alert().silenced"
-                    >
-                      <mat-icon
-                        class="ob"
-                        [svgIcon]="
-                          alert().silenced
-                            ? 'sound-off-fill'
-                            : 'sound-unavailable-fill'
-                        "
-                      ></mat-icon>
-                      {{ alert().silenced ? 'MUTED' : 'MUTE' }}
-                    </button>
-                  </div>
-                }
-                @if (alert().canAcknowledge) {
-                  <div>
-                    <button mat-raised-button (click)="ackAlarm()">
-                      <mat-icon>check</mat-icon>
-                      ACK
-                    </button>
-                  </div>
-                } @else {
-                  <button
-                    mat-raised-button
-                    matTooltip="Dismiss"
-                    matTooltipPosition="left"
-                    (click)="hide()"
-                  >
-                    <mat-icon>clear_all</mat-icon>
-                    Dismiss
-                  </button>
-                }
-
-                @if (app.data.activeRoute) {
-                  @let isLastPoint =
-                    course.courseData().pointIndex ===
-                    course.courseData().pointTotal - 1;
-                  <div>
-                    @if (
-                      app.config.course.autoNextPointOnArrival &&
-                      app.config.course.autoNextPointTrigger === alert().type
-                    ) {
-                      <div>
-                        @if (isLastPoint) {
-                          <timer-button
-                            [disabled]="nextPointClicked"
-                            [icon]="'clear_all'"
-                            [label]="'End Route in'"
-                            [cancelledLabel]="'End Route'"
-                            [period]="app.config.course.autoNextPointDelay"
-                            (nextPoint)="endRoute()"
-                          >
-                          </timer-button>
-                        } @else {
-                          <timer-button
-                            [disabled]="nextPointClicked"
-                            [icon]="'skip_next'"
-                            [label]="'Next point in'"
-                            [cancelledLabel]="'NEXT POINT'"
-                            [period]="app.config.course.autoNextPointDelay"
-                            (nextPoint)="gotoNextPoint()"
-                          >
-                          </timer-button>
-                        }
-                      </div>
-                    } @else if (showStaticNextPoint) {
-                      @if (isLastPoint) {
-                        <button
-                          mat-button
-                          [disabled]="nextPointClicked"
-                          (click)="endRoute()"
-                        >
-                          <mat-icon>clear_all</mat-icon>
-                          END ROUTE
-                        </button>
-                      } @else {
-                        <button
-                          mat-button
-                          [disabled]="nextPointClicked"
-                          (click)="gotoNextPoint()"
-                        >
-                          <mat-icon>skip_next</mat-icon>
-                          NEXT POINT
-                        </button>
-                      }
-                    }
-                  </div>
-                }
-              </div>
-            </mat-card-actions>
-          </mat-card>
         </div>
       }
     }
   `,
-  styles: [],
+  styles: [
+    `
+      .alert-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 40px;
+        margin-bottom: 4px;
+        padding: 0 4px 0 8px;
+        border-left: 5px solid var(--alert-color, gray);
+        border-radius: 6px;
+        overflow: hidden;
+        background-color: var(--mat-app-background-color, white);
+      }
+      /* Translucent like the Plotter Extensions widgets, so the chart shows through. */
+      @supports (background-color: color-mix(in srgb, white 78%, transparent)) {
+        .alert-row {
+          background-color: color-mix(
+            in srgb,
+            var(--mat-app-background-color, white) 78%,
+            transparent
+          );
+        }
+      }
+      .alert-emergency,
+      .alert-alarm {
+        --alert-color: #f44336;
+      }
+      .alert-warn,
+      .alert-alert {
+        --alert-color: #ff9800;
+      }
+      .alert-icon {
+        flex: none;
+      }
+      .alert-message {
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .alert-actions {
+        flex: none;
+        display: flex;
+        align-items: center;
+      }
+      .alert-timer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 3px;
+      }
+    `
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class AlertComponent {

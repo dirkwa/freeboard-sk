@@ -69,6 +69,7 @@ import {
   WeatherForecastModal,
   CourseSettingsModal,
   NotificationManager,
+  alertTier,
   MobService,
   CourseService,
   SettingsFacade,
@@ -293,6 +294,12 @@ export class AppComponent {
   protected mapSetFocus = signal<string>('');
   protected mapCenter = signal<Position>([0, 0]);
   protected audioStatus = signal<string>('');
+  protected cardAlerts = computed(() =>
+    this.notiMgr.alerts().filter(([, a]) => alertTier(a) === 'card')
+  );
+  protected otherAlerts = computed(() =>
+    this.notiMgr.alerts().filter(([, a]) => alertTier(a) !== 'card')
+  );
   protected isInteracting = computed(() => {
     return (
       this.mapInteract.isMeasuring() ||
@@ -630,6 +637,7 @@ export class AppComponent {
         tooltip: 'Alarms',
         buttonClass: 'button-warn',
         badge: this.notiMgr.alerts().length,
+        pulse: this.notiMgr.alerts().some(([, a]) => !a.acknowledged),
         action: () => this.toggleAlertList(true)
       },
       {

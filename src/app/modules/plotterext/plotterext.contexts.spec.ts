@@ -23,12 +23,16 @@ import { SKStreamFacade } from '../skstream/skstream.facade';
 // embedding-host kind is covered by plotterext.embedding-host.spec.ts.
 describe('PlotterExtensionService iframe contexts', () => {
   let service: PlotterExtensionService;
+  let config: { plotterExtensions: { widgets: []; state?: object } };
+  let saveConfig: ReturnType<typeof vi.fn>;
   const detachers: Array<() => void> = [];
   const clients: ExtensionClient[] = [];
   const frames: HTMLIFrameElement[] = [];
 
   beforeEach(() => {
     localStorage.clear();
+    config = { plotterExtensions: { widgets: [] } };
+    saveConfig = vi.fn();
     TestBed.configureTestingModule({
       providers: [
         PlotterExtensionService,
@@ -36,11 +40,12 @@ describe('PlotterExtensionService iframe contexts', () => {
         {
           provide: AppFacade,
           useValue: {
-            config: {
-              plotterExtensions: { widgets: [] },
+            config: Object.assign(config, {
               display: { nightMode: false },
               map: { center: [0, 0], zoomLevel: 10 }
-            },
+            }),
+            saveConfig,
+            configReady: true,
             mapExtent: signal([]),
             debug: () => {},
             isTopWindow: () => true,
@@ -123,9 +128,299 @@ describe('PlotterExtensionService iframe contexts', () => {
 
   const METHOD_NOT_FOUND = -32601;
 
-  function stored(): Record<string, unknown> {
-    return JSON.parse(localStorage.getItem('fb-plotterext-state') ?? '{}');
+  function stored(): object | undefined {
+    return config.plotterExtensions.state;
   }
+
+  function attachGauge(iframe: HTMLIFrameElement): () => void {
+    return service.attachWidget(iframe, {
+      extension: 'ext-a',
+      widget: 'gauge',
+      instanceId: 'inst-1'
+    } as Parameters<PlotterExtensionService['attachWidget']>[1]);
+  }
+
+  it('keeps widget state in the app config and saves it', async () => {
+    const client = await connect(attachGauge);
+    await client.state.set({ v: 1 });
+    expect(stored()).toEqual({
+      'ext-a': { instances: { 'inst-1': { v: 1 } } }
+    });
+    expect(saveConfig).toHaveBeenCalled();
+  });
+
+  it('hands a widget the state preset in the app config', async () => {
+    config.plotterExtensions.state = {
+      'ext-a': {
+        instances: { 'inst-1': { path: 'navigation.speedOverGround' } }
+      }
+    };
+    const client = await connect(attachGauge);
+    await expect(client.state.get()).resolves.toEqual({
+      path: 'navigation.speedOverGround'
+    });
+  });
+
+  it("moves this browser's earlier widget state into the app config", async () => {
+    localStorage.setItem(
+      'fb-plotterext-state',
+      JSON.stringify({ 'ext-a': { instances: { 'inst-1': { v: 1 } } } })
+    );
+    const client = await connect(attachGauge);
+    await expect(client.state.get()).resolves.toEqual({ v: 1 });
+    await client.state.set({ w: 2 });
+    expect(stored()).toEqual({
+      'ext-a': { instances: { 'inst-1': { v: 1, w: 2 } } }
+    });
+    expect(localStorage.getItem('fb-plotterext-state')).toBeNull();
+  });
+
+  it("keeps this browser's earlier state of widgets the config has no state for", async () => {
+    localStorage.setItem(
+      'fb-plotterext-state',
+      JSON.stringify({
+        'ext-a': { instances: { 'inst-1': { v: 1 }, 'inst-2': { v: 2 } } }
+      })
+    );
+    config.plotterExtensions.state = {
+      'ext-a': { instances: { 'inst-1': { v: 3 } } }
+    };
+    const client = await connect(attachGauge);
+    await expect(client.state.get()).resolves.toEqual({ v: 3 });
+    await client.state.set({ w: 4 });
+    expect(stored()).toMatchObject({
+      'ext-a': { instances: { 'inst-1': { v: 3, w: 4 }, 'inst-2': { v: 2 } } }
+    });
+  });
+
+  it("keeps this browser's earlier state when the config cannot be saved", async () => {
+    const earlier = JSON.stringify({ 'ext-a': { extension: { v: 1 } } });
+    localStorage.setItem('fb-plotterext-state', earlier);
+    saveConfig.mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError');
+    });
+    const client = await connect(attachGauge);
+    await expect(client.state.set({ w: 2 })).rejects.toBeDefined();
+    expect(localStorage.getItem('fb-plotterext-state')).toBe(earlier);
+  });
+
+  it("ignores this browser's earlier state when it is not an object", async () => {
+    localStorage.setItem('fb-plotterext-state', 'null');
+    const client = await connect(attachGauge);
+    await client.state.set({ v: 1 });
+    expect(stored()).toEqual({
+      'ext-a': { instances: { 'inst-1': { v: 1 } } }
+    });
+    expect(localStorage.getItem('fb-plotterext-state')).toBeNull();
+  });
+
+  it('refuses state values JSON cannot hold', async () => {
+    const client = await connect(attachGauge);
+    expect(await reason(client.state.set({ n: BigInt(1) }))).toBe(-32602);
+    expect(stored()).toBeUndefined();
+  });
+
+  describe("storage: 'device'", () => {
+    const DEVICE_KEY = 'fb-plotterext-device-state';
+
+    function deviceStored(): object {
+      return JSON.parse(localStorage.getItem(DEVICE_KEY) ?? '{}');
+    }
+
+    function place(...instanceIds: string[]) {
+      (config.plotterExtensions.widgets as unknown[]).push(
+        ...instanceIds.map((instanceId) => ({
+          instanceId,
+          extension: 'ext-a',
+          widget: 'gauge',
+          anchor: 'bottom-right',
+          col: 0,
+          row: 0
+        }))
+      );
+    }
+
+    it('keeps device state in this browser, apart from the user state', async () => {
+      place('inst-1');
+      const client = await connect(attachGauge);
+      await client.state.set({ v: 1 });
+      await client.state.set({ v: 2 }, { storage: 'device' });
+      await client.state.set(
+        { open: ['a'] },
+        {
+          scope: 'extension',
+          storage: 'device'
+        }
+      );
+      expect(stored()).toEqual({
+        'ext-a': { instances: { 'inst-1': { v: 1 } } }
+      });
+      expect(deviceStored()).toEqual({
+        'ext-a': {
+          instances: { 'inst-1': { v: 2 } },
+          extension: { open: ['a'] }
+        }
+      });
+      await expect(client.state.get()).resolves.toEqual({ v: 1 });
+      await expect(
+        client.state.get(undefined, { storage: 'device' })
+      ).resolves.toEqual({ v: 2 });
+      await expect(
+        client.state.get(['open'], { scope: 'extension', storage: 'device' })
+      ).resolves.toEqual({ open: ['a'] });
+    });
+
+    it('never falls back from one store to the other', async () => {
+      place('inst-1');
+      config.plotterExtensions.state = {
+        'ext-a': { instances: { 'inst-1': { only: 'user' } } }
+      };
+      const client = await connect(attachGauge);
+      await expect(
+        client.state.get(undefined, { storage: 'device' })
+      ).resolves.toEqual({});
+      await client.state.set({ only: 'device' }, { storage: 'device' });
+      await expect(client.state.get()).resolves.toEqual({ only: 'user' });
+    });
+
+    it('does not take device state from the app config or the earlier browser store', async () => {
+      place('inst-1');
+      localStorage.setItem(
+        'fb-plotterext-state',
+        JSON.stringify({ 'ext-a': { instances: { 'inst-1': { old: 1 } } } })
+      );
+      const client = await connect(attachGauge);
+      await expect(
+        client.state.get(undefined, { storage: 'device' })
+      ).resolves.toEqual({});
+    });
+
+    it('names the store in state.changed', async () => {
+      place('inst-1');
+      const client = await connect(attachGauge);
+      const seen: unknown[] = [];
+      await client.subscribe(['state.changed'], (_n, p) => seen.push(p));
+      await client.state.set({ v: 1 });
+      await client.state.set({ v: 2 }, { storage: 'device' });
+      await vi.waitFor(() => expect(seen).toHaveLength(2));
+      expect(seen).toEqual([
+        {
+          scope: 'instance',
+          storage: 'user',
+          instanceId: 'inst-1',
+          keys: ['v']
+        },
+        {
+          scope: 'instance',
+          storage: 'device',
+          instanceId: 'inst-1',
+          keys: ['v']
+        }
+      ]);
+    });
+
+    it('refuses a storage it does not know', async () => {
+      const client = await connect(attachGauge);
+      expect(
+        await reason(
+          client.call('state.set', { storage: 'session', values: { v: 1 } })
+        )
+      ).toBe(-32602);
+      expect(
+        await reason(client.call('state.get', { storage: 'session' }))
+      ).toBe(-32602);
+      expect(stored()).toBeUndefined();
+      expect(localStorage.getItem(DEVICE_KEY)).toBeNull();
+    });
+
+    it("removes a widget's instance state from both stores", async () => {
+      place('inst-1', 'inst-2');
+      const client = await connect(attachGauge);
+      await client.state.set({ v: 1 });
+      await client.state.set({ v: 2 }, { storage: 'device' });
+      localStorage.setItem(
+        DEVICE_KEY,
+        JSON.stringify({
+          'ext-a': { instances: { 'inst-1': { v: 2 }, 'inst-2': { w: 3 } } }
+        })
+      );
+      service.removeWidget('inst-1');
+      expect(
+        (stored() as Record<string, { instances?: object }>)['ext-a'].instances
+      ).toEqual({});
+      expect(deviceStored()).toEqual({
+        'ext-a': { instances: { 'inst-2': { w: 3 } } }
+      });
+    });
+
+    it('drops device state of widgets no longer placed when it saves', async () => {
+      place('inst-1');
+      localStorage.setItem(
+        DEVICE_KEY,
+        JSON.stringify({
+          'ext-a': { instances: { gone: { v: 9 } }, extension: { keep: 1 } },
+          'ext-b': { instances: { 'also-gone': { v: 8 } } }
+        })
+      );
+      const client = await connect(attachGauge);
+      await client.state.set({ v: 1 }, { storage: 'device' });
+      expect(deviceStored()).toEqual({
+        'ext-a': { instances: { 'inst-1': { v: 1 } }, extension: { keep: 1 } }
+      });
+    });
+
+    it('drops corrupt entries of the device store instead of failing', async () => {
+      place('inst-1');
+      localStorage.setItem(
+        DEVICE_KEY,
+        JSON.stringify({ 'ext-b': null, 'ext-c': 'x', 'ext-d': [1] })
+      );
+      const client = await connect(attachGauge);
+      await client.state.set({ v: 1 }, { storage: 'device' });
+      expect(deviceStored()).toEqual({
+        'ext-a': { instances: { 'inst-1': { v: 1 } } }
+      });
+    });
+
+    it('reports a device store this browser cannot write', async () => {
+      place('inst-1');
+      const client = await connect(attachGauge);
+      const setItem = vi
+        .spyOn(Storage.prototype, 'setItem')
+        .mockImplementation(() => {
+          throw new DOMException('full', 'QuotaExceededError');
+        });
+      try {
+        const err = await client.state
+          .set({ v: 1 }, { storage: 'device' })
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RpcError);
+        expect((err as RpcError).data).toMatchObject({
+          reason: 'STORAGE_UNAVAILABLE'
+        });
+      } finally {
+        setItem.mockRestore();
+      }
+    });
+
+    it('keeps device state of unplaced widgets while the settings load', async () => {
+      const app = TestBed.inject(AppFacade) as unknown as {
+        configReady: boolean;
+      };
+      app.configReady = false;
+      const earlier = { 'ext-b': { instances: { later: { v: 8 } } } };
+      localStorage.setItem(DEVICE_KEY, JSON.stringify(earlier));
+      const client = await connect(attachGauge);
+      await client.state.set(
+        { v: 1 },
+        { scope: 'extension', storage: 'device' }
+      );
+      expect(deviceStored()).toEqual({
+        ...earlier,
+        'ext-a': { extension: { v: 1 } }
+      });
+    });
+  });
 
   it('gives a widget its instance context, instance state and config-panel methods', async () => {
     const client = await connect((iframe) =>

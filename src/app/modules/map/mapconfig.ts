@@ -251,6 +251,32 @@ export const alarmStyles = {
 };
 
 export const destinationStyles = {
+  // vessel to destination: a thin direct bearing beside the fixed course line
+  // drawn from where the course started
+  line: new Style({
+    stroke: new Stroke({
+      color: 'rgba(221, 149, 0, 1)',
+      width: 1.5,
+      lineDash: [6, 6]
+    })
+  }),
+  // its own style, since the label is set on it and must not land on the line
+  point: new Style({
+    image: new Circle({
+      radius: 5,
+      stroke: new Stroke({
+        width: 2,
+        color: 'white'
+      }),
+      fill: new Fill({
+        color: 'rgba(221, 149, 0, 1)'
+      })
+    }),
+    text: new Text({
+      text: '',
+      offsetY: -29
+    })
+  }),
   marker: new Style({
     image: new Icon({
       src: './assets/img/waypoints/marker-green.png',
@@ -294,6 +320,26 @@ export const aircraftStyles = {
       offsetY: -12
     })
   })
+};
+
+// ***********
+// Radar and camera targets: the ring radar plotters draw around a tracked echo
+const sensorTargetStyle = (color: string) =>
+  new Style({
+    image: new Circle({
+      radius: 8,
+      stroke: new Stroke({ color, width: 2 }),
+      fill: new Fill({ color: 'rgba(0, 0, 0, 0)' })
+    }),
+    text: new Text({
+      text: '',
+      offsetY: -16
+    })
+  });
+
+export const sensorTargetStyles = {
+  default: sensorTargetStyle('#ff6f00'),
+  inactive: sensorTargetStyle('#9e9e9e')
 };
 
 // ***********

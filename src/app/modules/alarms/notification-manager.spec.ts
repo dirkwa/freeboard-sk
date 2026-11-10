@@ -1,8 +1,9 @@
 import { TestBed } from '@angular/core/testing';
+import { HttpErrorResponse } from '@angular/common/http';
 import { signal } from '@angular/core';
 import { MatBottomSheet } from '@angular/material/bottom-sheet';
 import { Subject } from 'rxjs';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NotificationManager } from './notification-manager';
 import { AppFacade } from 'src/app/app.facade';
@@ -81,6 +82,12 @@ describe('NotificationManager alert properties (#755)', () => {
     msg.result = { path, value };
     notifications.next(msg);
   };
+
+  it('does not raise a MOB on a server without the Notifications API', async () => {
+    app.featureFlags.set({ notificationApi: false });
+    const mgr = TestBed.inject(NotificationManager);
+    expect(await mgr.raiseServerAlarm('mob', 'Person Overboard!')).toBeNull();
+  });
 
   it('carries the notification position into the alert properties', () => {
     const mgr = TestBed.inject(NotificationManager);
@@ -292,11 +299,7 @@ describe('NotificationManager alert actions', () => {
   let posts: Array<{ path: string; response: Subject<unknown> }>;
   let errors: unknown[];
 
-  beforeEach(() => {
-    TestBed.resetTestingModule();
-    notifications = new Subject<NotificationMessage>();
-    posts = [];
-    errors = [];
+  const configure = () =>
     TestBed.configureTestingModule({
       providers: [
         NotificationManager,
@@ -333,9 +336,17 @@ describe('NotificationManager alert actions', () => {
         { provide: MatBottomSheet, useValue: {} }
       ]
     });
+
+  beforeEach(() => {
+    TestBed.resetTestingModule();
+    notifications = new Subject<NotificationMessage>();
+    posts = [];
+    errors = [];
+    configure();
   });
 
   const arrive = ({
+    path = PATH,
     id = ID,
     state = ALARM_STATE.alert,
     acknowledged = false,
@@ -343,7 +354,7 @@ describe('NotificationManager alert actions', () => {
   } = {}) => {
     const msg = new NotificationMessage();
     msg.result = {
-      path: PATH,
+      path,
       value: {
         id,
         state,
@@ -372,10 +383,10 @@ describe('NotificationManager alert actions', () => {
     posts[i].response.complete();
   };
 
-  const shown = (mgr: NotificationManager) => {
-    const alert = mgr.getAlert(PATH);
+  const shown = (mgr: NotificationManager, path = PATH) => {
+    const alert = mgr.getAlert(path);
     if (!alert) {
-      throw new Error(`no alert at ${PATH}`);
+      throw new Error(`no alert at ${path}`);
     }
     return alert;
   };
@@ -533,6 +544,302 @@ describe('NotificationManager alert actions', () => {
 
     expect(posts.map((p) => p.path)).toEqual([`notifications/${ID}/silence`]);
     expect(shown(mgr).silenced).toBe(true);
+  });
+
+  it('keeps the alert silenced in this browser when the server refuses MUTE', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    posts[0].response.error({ status: 401 });
+    arrive();
+
+    expect(shown(mgr).silenced).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps a refused MUTE when the server reports the alert silenced and then not', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    posts[0].response.error({ status: 401 });
+    arrive({ silenced: true });
+    arrive();
+
+    expect(shown(mgr).silenced).toBe(true);
+  });
+
+  it('keeps a refused MUTE whose silenced delta arrived before the refusal', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    arrive({ silenced: true });
+    posts[0].response.error({ status: 401 });
+    arrive();
+
+    expect(shown(mgr).silenced).toBe(true);
+  });
+
+  it('does not silence an alert that escalated before MUTE was refused', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    arrive({ state: ALARM_STATE.alarm });
+    posts[0].response.error({ status: 401 });
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('does not silence an alert that cleared and returned before MUTE was refused', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    clear();
+    arrive();
+    posts[0].response.error({ status: 401 });
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('does not silence an alert that changed state and back before MUTE was refused', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    arrive({ state: ALARM_STATE.alarm });
+    arrive();
+    posts[0].response.error({ status: 401 });
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('does not silence an alert that cleared and returned before Silence All was refused', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+    clear();
+    arrive();
+    posts[0].response.error({ status: 401 });
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('does not silence an alert that changed state and back before Silence All was refused', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+    arrive({ state: ALARM_STATE.alarm });
+    arrive();
+    posts[0].response.error({ status: 401 });
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('keeps a refused Silence All when the server reports the alert silenced and then not', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+    posts[0].response.error({ status: 403 });
+    arrive({ silenced: true });
+    arrive();
+
+    expect(shown(mgr).silenced).toBe(true);
+  });
+
+  it('sounds again when an alarm silenced in this browser escalates', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silence(PATH);
+    posts[0].response.error({ status: 403 });
+    arrive({ state: ALARM_STATE.alarm });
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('still reports a refused ACK', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.acknowledge(PATH);
+    const failure = { status: 401 };
+    posts[0].response.error(failure);
+
+    expect(shown(mgr).acknowledged).toBe(false);
+    expect(errors).toEqual([failure]);
+  });
+
+  const OTHER_PATH = 'notifications.navigation.anchor';
+  const OTHER_ID = '3f0c9a52-7d1e-4b8a-a6c2-5e9d8b7f1a24';
+
+  for (const status of [401, 403]) {
+    it(`silences every alert in this browser when the server refuses Silence All with ${status}`, () => {
+      const mgr = TestBed.inject(NotificationManager);
+      arrive();
+      arrive({ path: OTHER_PATH, id: OTHER_ID });
+
+      mgr.silenceAll();
+      posts[0].response.error({ status });
+
+      expect(posts.map((p) => p.path)).toEqual(['notifications/silenceAll']);
+      expect(shown(mgr).silenced).toBe(true);
+      expect(shown(mgr, OTHER_PATH).silenced).toBe(true);
+      expect(errors).toEqual([]);
+    });
+  }
+
+  it('shows the alerts silenced as soon as Silence All is pressed', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+
+    expect(shown(mgr).silenced).toBe(true);
+  });
+
+  it('shows the server status again once a delta confirms Silence All', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+    succeed();
+    arrive({ silenced: true });
+    arrive();
+
+    expect(shown(mgr).silenced).toBe(false);
+  });
+
+  it('does not silence an alert raised while Silence All is under way', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+    arrive({ path: OTHER_PATH, id: OTHER_ID });
+    posts[0].response.error({ status: 401 });
+
+    expect(shown(mgr, OTHER_PATH).silenced).toBe(false);
+  });
+
+  it('reverts Silence All and reports the error when the request fails', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    arrive();
+
+    mgr.silenceAll();
+    const failure = { status: 500 };
+    posts[0].response.error(failure);
+
+    expect(shown(mgr).silenced).toBe(false);
+    expect(errors).toEqual([failure]);
+  });
+
+  it('returns the id the server gives a raised MOB', async () => {
+    const mgr = TestBed.inject(NotificationManager);
+    const raised = mgr.raiseServerAlarm('mob', 'Person Overboard!');
+    posts[0].response.next({ state: 'COMPLETED', statusCode: 200, id: ID });
+    posts[0].response.complete();
+    expect(await raised).toEqual({ id: ID });
+  });
+
+  it('says a MOB was not taken, without an error, when nobody is logged in', async () => {
+    const mgr = TestBed.inject(NotificationManager);
+    const raised = mgr.raiseServerAlarm('mob', 'Person Overboard!');
+    posts[0].response.error(new HttpErrorResponse({ status: 401 }));
+    expect(await raised).toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  it('gives up on a MOB request the server does not answer in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = TestBed.inject(NotificationManager);
+      const raised = mgr.raiseServerAlarm('mob', 'Person Overboard!');
+      vi.advanceTimersByTime(3001);
+      expect(await raised).toBeNull();
+      expect(errors).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports any other failure to raise a MOB', async () => {
+    const mgr = TestBed.inject(NotificationManager);
+    const raised = mgr.raiseServerAlarm('mob', 'Person Overboard!');
+    const failure = new HttpErrorResponse({ status: 500 });
+    posts[0].response.error(failure);
+    expect(await raised).toBeNull();
+    expect(errors).toEqual([failure]);
+  });
+
+  it('shows a MOB kept on this display until it is ended there', () => {
+    const mgr = TestBed.inject(NotificationManager);
+    const at = Date.UTC(2026, 10, 9, 12);
+    const id = mgr.addLocalMob({ latitude: -18.1, longitude: 178.4 }, at);
+    const [[, alert]] = mgr.mobAlerts();
+    expect(alert).toMatchObject({
+      id,
+      type: 'mob',
+      local: true,
+      createdAt: at,
+      canCancel: true,
+      canAcknowledge: false,
+      properties: { position: { latitude: -18.1, longitude: 178.4 } }
+    });
+
+    mgr.removeLocalMob(alert);
+    expect(mgr.mobAlerts()).toEqual([]);
+  });
+
+  describe('across a reload', () => {
+    const KEY = 'fb-local-mobs';
+    const reload = () => {
+      TestBed.resetTestingModule();
+      configure();
+      return TestBed.inject(NotificationManager);
+    };
+    afterEach(() => localStorage.removeItem(KEY));
+
+    it('keeps a MOB on this display until it is ended there', () => {
+      const at = Date.UTC(2026, 10, 9, 12);
+      TestBed.inject(NotificationManager).addLocalMob(
+        { latitude: -18.1, longitude: 178.4 },
+        at
+      );
+
+      const after = reload();
+      const [[, alert]] = after.mobAlerts();
+      expect(alert).toMatchObject({
+        local: true,
+        createdAt: at,
+        properties: { position: { latitude: -18.1, longitude: 178.4 } }
+      });
+
+      after.removeLocalMob(alert);
+      expect(reload().mobAlerts()).toEqual([]);
+    });
+
+    it('ignores what it cannot read', () => {
+      localStorage.setItem(
+        KEY,
+        JSON.stringify([
+          null,
+          { createdAt: 'x' },
+          { createdAt: 5, position: { latitude: 'a', longitude: 1 } }
+        ])
+      );
+      const [[, alert], ...rest] = reload().mobAlerts();
+      expect(rest).toEqual([]);
+      expect(alert).toMatchObject({ createdAt: 5, properties: {} });
+
+      localStorage.setItem(KEY, '{not json');
+      expect(reload().mobAlerts()).toEqual([]);
+    });
   });
 });
 

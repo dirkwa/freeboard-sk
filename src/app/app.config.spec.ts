@@ -156,6 +156,19 @@ describe('cleanConfig() legacy migration', () => {
     ]);
   });
 
+  it('keeps plotter extension state, dropping an entry that is not an object', () => {
+    const cfg: IAppConfig = defaultConfig();
+    const state = {
+      'ext-a': { instances: { a: { path: 'navigation.speedOverGround' } } },
+      'ext-b': 'x'
+    };
+    cfg.plotterExtensions.state = state as typeof cfg.plotterExtensions.state;
+    cleanConfig(cfg, {});
+    expect(cfg.plotterExtensions.state).toEqual({
+      'ext-a': { instances: { a: { path: 'navigation.speedOverGround' } } }
+    });
+  });
+
   it.each([
     [true, 'server'],
     [false, 'auto']
@@ -265,6 +278,38 @@ describe('cleanConfig() legacy migration', () => {
     expect(cfg.display.plugins.favourites).toEqual(['/@mxtommy/kip']);
   });
 
+  it('shows the current arrow on the vessel by default', () => {
+    expect(defaultConfig().vessels.currentVector).toBe(true);
+  });
+
+  it('shows the current arrow for a config saved without the setting', () => {
+    const cfg: LegacyAppConfig = defaultConfig();
+    unset(cfg.vessels, 'currentVector');
+    cleanConfig(cfg, {});
+    expect(cfg.vessels.currentVector).toBe(true);
+  });
+
+  it('hides the wind vectors on the vessel by default', () => {
+    expect(defaultConfig().vessels.windVectors).toBe(false);
+  });
+
+  it('keeps the wind vectors on once the user has them on', () => {
+    const cfg = defaultConfig();
+    cfg.vessels.windVectors = true;
+    cleanConfig(cfg, {});
+    expect(cfg.vessels.windVectors).toBe(true);
+  });
+
+  it('keeps the wind vectors on through a save and reload', () => {
+    const cfg = defaultConfig();
+    cfg.vessels.windVectors = true;
+    // saved as JSON, to localStorage and to the server's applicationData
+    const reloaded = JSON.parse(JSON.stringify(cfg)) as LegacyAppConfig;
+    expect(isSavedConfig(reloaded)).toBe(true);
+    cleanConfig(reloaded, {});
+    expect(reloaded.vessels.windVectors).toBe(true);
+  });
+
   it('displays the vessel trail by default', () => {
     expect(defaultConfig().vessels.trail).toBe(true);
   });
@@ -339,6 +384,19 @@ describe('cleanConfig() legacy migration', () => {
     expect(cfg.selections).not.toHaveProperty('notes');
   });
 
+  it('keeps the stored settings of the retired instruments panel for older builds', () => {
+    const cfg: LegacyAppConfig = defaultConfig();
+    const plugins = {
+      instruments: '/@signalk/instrumentpanel',
+      startOnOpen: true,
+      parameters: null,
+      favourites: ['/@mxtommy/kip']
+    };
+    cfg.display.plugins = structuredClone(plugins);
+    cleanConfig(cfg, {});
+    expect(cfg.display.plugins).toEqual(plugins);
+  });
+
   it('produces a config with every default key present', () => {
     const cfg = legacyConfig();
     cleanConfig(cfg, {});
@@ -353,7 +411,8 @@ describe('cleanConfig() legacy migration', () => {
  * every release since 2.17, configs upgraded release by release, and 2.13 /
  * 2.15 configs from before the 2.17 settings layout. `cleaned` holds what
  * `cleanConfig()` made of each before it was built on the settings schema,
- * plus each setting added since then at its default (`radars.overlay`).
+ * plus each setting added since then at its default (`radars.overlay`,
+ * `radars.ringColor`).
  */
 describe('cleanConfig() on configs saved by earlier releases', () => {
   for (const { savedBy, saved, cleaned } of savedConfigs.configs) {
@@ -533,6 +592,7 @@ describe('cleanConfig() for sections saved before a setting existed', () => {
       deviceId: '',
       opacity: 1,
       rings: true,
+      ringColor: '#404040',
       overlay: false
     });
   });
@@ -550,7 +610,15 @@ describe('cleanConfig() for sections saved before a setting existed', () => {
       deviceId: 'radar-1',
       opacity: 0.5,
       rings: false,
+      ringColor: '#404040',
       overlay: false
     });
+  });
+
+  it('draws radar rings of radars saved before the ring colour setting in dark grey', () => {
+    const cfg: LegacyAppConfig = defaultConfig();
+    unset(cfg.radars, 'ringColor');
+    cleanConfig(cfg, {});
+    expect(cfg.radars.ringColor).toBe('#404040');
   });
 });

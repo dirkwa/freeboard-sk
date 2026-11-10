@@ -23,6 +23,8 @@ import { FBVessel, FBVessels, Position } from 'src/app/types';
 import { ResourceListBase } from '../resource-list-baseclass';
 import { getAisIcon } from 'src/app/modules/icons';
 import { TrackHistoryService } from 'src/app/modules/skstream/track-history.service';
+import { SKStreamFacade } from 'src/app/modules/skstream/skstream.facade';
+import { aisTargetShown } from 'src/app/lib/ais-filter';
 
 //** AIS Dialog **
 @Component({
@@ -74,7 +76,9 @@ export class AISListComponent extends ResourceListBase<FBVessel> {
       id: 30,
       description: 'Pleasure',
       selected: false,
-      icon: getAisIcon(30).svgIcon
+      // 30 itself is fishing, which has its own icon; show the pleasure craft
+      // (37) icon, as most of the 30s are sailing and pleasure craft.
+      icon: getAisIcon(37).svgIcon
     },
     {
       id: 40,
@@ -127,6 +131,7 @@ export class AISListComponent extends ResourceListBase<FBVessel> {
 
   protected app = inject(AppFacade);
   protected trackHistory = inject(TrackHistoryService);
+  private skstream = inject(SKStreamFacade);
 
   constructor(protected override skres: SKResourceService) {
     super('aisTargets', skres);
@@ -135,6 +140,31 @@ export class AISListComponent extends ResourceListBase<FBVessel> {
   ngOnInit() {
     this.initItems();
     this.trackHistory.refreshRecorded();
+  }
+
+  /**
+   * @description How many of the received vessels the chart draws under the
+   * current filters, so a filter that hides most of them cannot go unnoticed.
+   * Reads the AIS status signal to follow vessels arriving and expiring.
+   * @returns null when the chart draws every vessel.
+   */
+  protected chartShown(): { shown: number; total: number } | null {
+    this.skstream.aisStatus();
+    const sel = this.app.config.selections;
+    const targets = this.app.data.vessels.aisTargets;
+    let shown = 0;
+    targets.forEach((v, id) => {
+      if (
+        aisTargetShown(id, v, {
+          filterIds: sel.aisTargets,
+          filterByShipType: sel.aisFilterByShipType,
+          filterShipTypes: sel.aisTargetTypes
+        })
+      ) {
+        shown++;
+      }
+    });
+    return shown < targets.size ? { shown, total: targets.size } : null;
   }
 
   close() {

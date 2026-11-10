@@ -1,4 +1,4 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { AppComponent } from './app.component';
 import { AppFacade } from './app.facade';
 import { afterEach, beforeEach, expect, describe, it, vi } from 'vitest';
@@ -103,48 +103,6 @@ describe('AppComponent', () => {
     expect(openFeatureBrowser).toHaveBeenCalled();
   });
 
-  // The right-hand toolbar button showing the given icon, or null.
-  const toolbarButton = (
-    fixture: ComponentFixture<AppComponent>,
-    icon: string
-  ): HTMLButtonElement | null =>
-    fixture.debugElement
-      .queryAll(By.css('fb-map-toolbar.right button'))
-      .map((de) => de.nativeElement as HTMLButtonElement)
-      .find((b) => b.querySelector('mat-icon')?.textContent?.trim() === icon) ??
-    null;
-
-  it('drops the Instruments toolbar button when no instruments app is selected', () => {
-    const fixture = TestBed.createComponent(AppComponent);
-    const app = TestBed.inject(AppFacade);
-    app.uiConfig.update((c) => Object.assign({}, c, { toolbarButtons: true }));
-
-    app.config.display.plugins.instruments = '/@signalk/instrumentpanel';
-    fixture.detectChanges();
-    expect(toolbarButton(fixture, 'av_timer')).not.toBeNull();
-
-    // Settings -> Display -> Select Instruments App: "None" stores a null url.
-    app.config.display.plugins.instruments = null;
-    fixture.detectChanges();
-    expect(toolbarButton(fixture, 'av_timer')).toBeNull();
-  });
-
-  it('keeps the Instruments toolbar button, disabled, while the panel is open', () => {
-    const fixture = TestBed.createComponent(AppComponent);
-    const app = TestBed.inject(AppFacade);
-    app.uiConfig.update((c) => Object.assign({}, c, { toolbarButtons: true }));
-    app.config.display.plugins.instruments = '/@signalk/instrumentpanel';
-    fixture.detectChanges();
-    expect(toolbarButton(fixture, 'av_timer')?.disabled).toBe(false);
-
-    app.instrumentPanel.set({ open: true, activate: true });
-    fixture.detectChanges();
-
-    // Transient conditions disable the button but keep its place, so the
-    // buttons below it do not shift up and down as the user works.
-    expect(toolbarButton(fixture, 'av_timer')?.disabled).toBe(true);
-  });
-
   describe('when the left toolbar runs out of room', () => {
     // jsdom does no layout: report every toolbar as tall enough for 4 buttons.
     class FourSlotResizeObserver {
@@ -174,10 +132,10 @@ describe('AppComponent', () => {
       const triggers = fixture.debugElement
         .queryAll(By.css('fb-map-toolbar.left button'))
         .map((de) => de.nativeElement as HTMLButtonElement);
-      // Alarms, Layers, Draw, then More holding North up and Follow
+      // Alarms, Layers, More holding Draw, North up and Follow, then MOB
       expect(
         triggers.map((b) => b.querySelector('mat-icon')?.textContent?.trim())
-      ).toEqual(['', 'layers', 'edit', 'more_horiz']);
+      ).toEqual(['', 'layers', 'more_horiz', '']);
 
       const more = fixture.debugElement
         .queryAll(By.directive(MatMenuTrigger))
@@ -192,7 +150,8 @@ describe('AppComponent', () => {
       const labels = Array.from(
         document.querySelectorAll<HTMLElement>('.mat-mdc-menu-item-text > span')
       ).map((el) => el.textContent?.trim());
-      expect(labels.slice(0, 2)).toEqual([
+      expect(labels.slice(0, 3)).toEqual([
+        'Draw / Measure / Select',
         'Show Heading Up',
         'Center & Follow Vessel'
       ]);
@@ -233,37 +192,6 @@ describe('AppComponent', () => {
         labels.indexOf('Settings')
       );
     });
-  });
-
-  it('sandboxes the instrument panel iframe with form submission allowed', () => {
-    const fixture = TestBed.createComponent(AppComponent);
-    fixture.detectChanges();
-    // ngOnInit resets `activate` from config, so open the panel after it runs.
-    TestBed.inject(AppFacade).instrumentPanel.set({
-      open: true,
-      activate: true
-    });
-    fixture.detectChanges();
-
-    // The only iframe inside the sidenav is the instrument panel; the plotter
-    // extension frames render outside mat-sidenav-container.
-    const iframe = fixture.debugElement.query(By.css('mat-sidenav iframe'))
-      ?.nativeElement as HTMLIFrameElement | undefined;
-    expect(iframe).toBeDefined();
-
-    // jsdom neither enforces sandbox nor reflects it onto the `sandbox`
-    // DOMTokenList, so read the attribute. Without allow-forms, Chrome blocks
-    // form submission from the embedded webapp, making it impossible to sign in.
-    // Asserting the exact set also catches a relaxation, such as a later change
-    // granting allow-top-navigation.
-    const sandbox = (iframe?.getAttribute('sandbox') ?? '')
-      .split(/\s+/)
-      .filter(Boolean);
-    expect(sandbox.sort()).toEqual([
-      'allow-forms',
-      'allow-same-origin',
-      'allow-scripts'
-    ]);
   });
 
   describe('starting a route that is not displayed on the map', () => {
@@ -498,6 +426,41 @@ describe('AppComponent', () => {
       expect(connect).toHaveBeenCalledTimes(1);
       expect(shownType(infoPanel)).toBe('radars');
     });
+  });
+
+  it('hides the nav data panel while a widget is moved, and shows it again after', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const plotterExt = TestBed.inject(PlotterExtensionService);
+    plotterExt.manifests.set({
+      ext: {
+        name: 'Ext',
+        apiVersion: '1',
+        widgets: [
+          { id: 'w', title: 'W', type: 'iframe', url: 'w.html', size: '1x1' }
+        ]
+      }
+    });
+    plotterExt.activeWidgets.set([
+      {
+        instanceId: 'i1',
+        extension: 'ext',
+        widget: 'w',
+        anchor: 'br',
+        col: 3,
+        row: 1
+      }
+    ]);
+    fixture.detectChanges();
+    const panel = () => fixture.nativeElement.querySelector('.navdataPanel');
+    expect(panel()).not.toBeNull();
+
+    plotterExt.startMove('i1');
+    fixture.detectChanges();
+    expect(panel()).toBeNull();
+
+    plotterExt.cancelMove();
+    fixture.detectChanges();
+    expect(panel()).not.toBeNull();
   });
 
   it('removes a button an extension hides from the right toolbar, and puts it back in its place', async () => {

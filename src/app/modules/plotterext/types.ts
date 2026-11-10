@@ -16,6 +16,7 @@ export const HOST_CAPABILITIES = [
   'buttons.visibility',
   'buttons.decorations',
   'events.publish',
+  'state.storage',
   'signalk.stream',
   'signalk.put',
   'units',
@@ -31,6 +32,7 @@ export const HOST_CAPABILITIES = [
   'ui',
   'windows',
   'overlays.image',
+  'overlays.animated',
   'overlays.data',
   'actions',
   'actions.overlay',
@@ -244,6 +246,8 @@ export interface OverlayContribution {
   configPanel?: string;
   /** Image overlays: pixel density it looks right at, used instead of the screen's. */
   preferredPixelRatio?: number;
+  /** Image overlays: least ms between live frames it wants; marks it animated. */
+  preferredLiveInterval?: number;
   /** Data overlays: its features are selectable (capability `actions.overlay`). */
   interactive?: boolean;
   /** Data overlays: the style layers whose features are selectable; all when unset. */

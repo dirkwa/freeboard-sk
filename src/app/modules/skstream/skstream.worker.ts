@@ -24,6 +24,13 @@ import {
 import { SimplifyAP } from 'simplify-ts';
 import { Convert } from 'src/app/lib/convert';
 import { magneticToTrue } from 'src/app/lib/true-bearing';
+import {
+  isSilent,
+  isStale,
+  linkedContexts,
+  linkingTargets,
+  processSensorTarget
+} from './sensor-targets';
 import { IAppConfig, PathValue, Position } from 'src/app/types';
 import {
   AUTO_ORIENTATION,
@@ -247,7 +254,8 @@ export function initVessels() {
     atons: new Map(),
     aircraft: new Map(),
     sar: new Map(),
-    meteo: new Map()
+    meteo: new Map(),
+    targets: new Map()
   };
   // flag to indicate at least one position data message received
   vessels.self.positionReceived = false;
@@ -1086,6 +1094,50 @@ function parseStreamMessage(data: SKStreamMessage) {
             );
             break;
 
+          case 'targets': {
+            // radar, camera and other sensor targets, shown whatever the
+            // AIS vessel filter, as they come from the boat's own sensors
+            // A boat drawn at a context the target links to, directly or
+            // through other targets, may move with it, so it is redrawn,
+            // under the old link and the new one. A position appearing or
+            // going also decides whether the targets linking to this one
+            // are drawn on their own.
+            const before = linkedContexts(data.context, vessels.targets);
+            const dependants =
+              v.path === 'navigation.position'
+                ? linkingTargets(data.context, vessels.targets)
+                : [];
+            const kept = processSensorTarget(
+              vessels.targets,
+              data.context,
+              v,
+              vesselPrefs.aisCogLine
+            );
+            new Set([
+              ...before,
+              ...dependants,
+              ...linkedContexts(data.context, vessels.targets)
+            ]).forEach((linked) => {
+              if (
+                vessels.aisTargets.has(linked) ||
+                vessels.targets.has(linked)
+              ) {
+                targetStatus.updated[linked] = true;
+              }
+            });
+            if (!kept) {
+              targetStatus.expired[data.context] = true;
+              break;
+            }
+            // The radius filter waits for the first position, so a link
+            // that arrives before it is kept.
+            if (!vessels.targets.get(data.context)?.positionReceived) {
+              break;
+            }
+            filterContext(data.context, vessels.targets);
+            break;
+          }
+
           case 'vessels': // vessels
             if (s.isSelf(data)) {
               // self
@@ -1252,6 +1304,19 @@ function selectVessel(id: string): SKVessel {
   return vessel;
 }
 
+const CURRENT_KEYS = ['setTrue', 'setMagnetic', 'drift'] as const;
+type CurrentKey = (typeof CURRENT_KEYS)[number];
+const isCurrentKey = (key: string): key is CurrentKey =>
+  (CURRENT_KEYS as readonly string[]).includes(key);
+
+function setCurrentValue(d: SKVessel, key: CurrentKey, value: unknown) {
+  d.current = {
+    ...d.current,
+    [key]: typeof value === 'number' ? value : null
+  };
+  d.currentUpdatedAt = { ...d.currentUpdatedAt, [key]: Date.now() };
+}
+
 // ** process common vessel data and true / magnetic preference **
 export function processVessel(d: SKVessel, v: PathValue, isSelf = false) {
   // The value's shape is selected by `path` (a number for speeds, an object
@@ -1280,6 +1345,20 @@ export function processVessel(d: SKVessel, v: PathValue, isSelf = false) {
       d.performance.beatAngle = value;
     } else if (v.path === 'performance.gybeAngle') {
       d.performance.gybeAngle = value;
+    } else if (v.path === 'navigation.speedThroughWater') {
+      d.stw = value;
+      d.stwUpdatedAt = Date.now();
+    } else if (v.path === 'environment.current') {
+      for (const key of CURRENT_KEYS) {
+        if (value && typeof value[key] !== 'undefined') {
+          setCurrentValue(d, key, value[key]);
+        }
+      }
+    } else if (v.path.startsWith('environment.current.')) {
+      const key = v.path.slice('environment.current.'.length);
+      if (isCurrentKey(key)) {
+        setCurrentValue(d, key, value);
+      }
     }
     // ** course API data
     else if (v.path.startsWith('navigation.course.')) {
@@ -1348,6 +1427,8 @@ export function processVessel(d: SKVessel, v: PathValue, isSelf = false) {
     d.callsignHf = value;
   } else if (v.path === 'design.aisShipType') {
     d.type = value;
+  } else if (v.path === 'sensors.ais.class') {
+    d.aisClass = value === 'A' || value === 'B' ? value : undefined;
   } else if (v.path === 'design.length') {
     d.design.length = value ?? null;
   } else if (v.path === 'design.beam') {
@@ -1372,6 +1453,7 @@ export function processVessel(d: SKVessel, v: PathValue, isSelf = false) {
     d.state = value;
   } else if (v.path === 'navigation.speedOverGround') {
     d.sog = value;
+    d.sogUpdatedAt = Date.now();
   }
   // ** environment sun / mode
   else if (v.path === 'environment.mode') {
@@ -1434,8 +1516,10 @@ export function processVessel(d: SKVessel, v: PathValue, isSelf = false) {
   // ** cog **
   else if (v.path === 'navigation.courseOverGroundTrue') {
     d.cogTrue = value;
+    d.cogTrueUpdatedAt = Date.now();
   } else if (v.path === 'navigation.courseOverGroundMagnetic') {
     d.cogMagnetic = value;
+    d.cogMagneticUpdatedAt = Date.now();
   }
 
   // ** heading **
@@ -1571,6 +1655,23 @@ function processAISStatus() {
       vessels.sar.delete(k);
     } else if (v.lastUpdated.valueOf() < now - aisMgr.staleAge) {
       //if stale then mark inactive
+      targetStatus.stale[k] = true;
+    }
+  });
+  vessels.targets.forEach((v, k) => {
+    if (isSilent(v, now)) {
+      const linked = [
+        ...linkedContexts(k, vessels.targets),
+        ...linkingTargets(k, vessels.targets)
+      ];
+      targetStatus.expired[k] = true;
+      vessels.targets.delete(k);
+      linked.forEach((context) => {
+        if (vessels.aisTargets.has(context) || vessels.targets.has(context)) {
+          targetStatus.updated[context] = true;
+        }
+      });
+    } else if (isStale(v, now)) {
       targetStatus.stale[k] = true;
     }
   });

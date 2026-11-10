@@ -37,7 +37,13 @@ import { AppFacade } from 'src/app/app.facade';
 import { SKResourceService } from 'src/app/modules/skresources/resources.service';
 import { MapService } from 'src/app/modules/map/ol/lib/map.service';
 import { FIT_MAX_ZOOM, fitBbox, type LonLatBox } from 'src/app/lib/map-fit';
-import { FBCharts, FBNotes, LineString, Position } from 'src/app/types';
+import {
+  FBCharts,
+  FBNotes,
+  IAppConfig,
+  LineString,
+  Position
+} from 'src/app/types';
 import {
   type ActionErrorReason,
   type BusPort,
@@ -56,12 +62,16 @@ import {
   RpcError,
   RPC_ERRORS,
   type SetVisibilityParams,
+  type StateGetParams,
+  type StateSetParams,
+  type StateStorage,
   windowPort
 } from 'signalk-plotterext-bus/host';
 import {
   ANCHOR_COL_ORDER,
   ANCHOR_GRAVITY,
   ANCHOR_GRID,
+  ANCHORS,
   AnchorId,
   BackgroundContribution,
   ButtonContribution,
@@ -106,7 +116,10 @@ import {
   resolveOverlayUrl,
   type ResolvedUrl
 } from './data-overlay-style';
-import type { OverlayStyle } from 'signalk-plotterext-bus/host';
+import type {
+  OverlayStateEvent,
+  OverlayStyle
+} from 'signalk-plotterext-bus/host';
 import { createNightModeMethods } from './nightmode-methods';
 import {
   createEventsMethods,
@@ -142,6 +155,8 @@ import {
 import { SKStreamFacade } from 'src/app/modules/skstream/skstream.facade';
 
 const STATE_STORAGE_KEY = 'fb-plotterext-state';
+// `storage: 'device'` state: this browser only, never in the app config.
+const DEVICE_STATE_STORAGE_KEY = 'fb-plotterext-device-state';
 // Fixed state/scope key for the embedding-host connection (reverse embedding).
 // The caller's asserted id is adopted into the handshake context.id, but state
 // stays under this single scope — one embedder per server in practice.
@@ -152,12 +167,9 @@ type VisibilityChoices = Record<string, Record<string, boolean>>;
 type DecorationChoices = Record<string, Record<string, DecorationOverride>>;
 const SK_PATH_PERIOD = 1000; // default delta period (ms) for relayed paths
 
-interface ExtensionStateStore {
-  [extensionId: string]: {
-    extension?: Record<string, unknown>;
-    instances?: { [instanceId: string]: Record<string, unknown> };
-  };
-}
+type ExtensionStateStore = NonNullable<
+  IAppConfig['plotterExtensions']['state']
+>;
 
 interface LiveContext {
   extension: string;
@@ -780,18 +792,22 @@ export class PlotterExtensionService {
 
   /**
    * Emit `overlay.state` to the owning extension for each overlay whose
-   * visibility, opacity or suspension changed — whoever changed it. The first
+   * visibility, opacity or suspension changed — whoever changed it — or, for
+   * an image overlay, whose granted live-frame interval changed. The first
    * report of an overlay seeds silently; a runtime reads the starting state
-   * with `overlay.list`.
+   * with `overlay.list` and its interval from `overlay.request`.
    */
   private emitOverlayStates(entries: OverlayEntry[]) {
     const next = new Map<string, string>();
     for (const e of entries) {
-      const state = {
+      const state: OverlayStateEvent = {
         overlayId: e.id,
         visible: e.visible,
         opacity: e.opacity,
-        suspended: e.suspended
+        suspended: e.suspended,
+        ...(e.liveInterval !== undefined
+          ? { liveInterval: e.liveInterval }
+          : {})
       };
       const sig = JSON.stringify(state);
       next.set(e.key, sig);
@@ -932,8 +948,7 @@ export class PlotterExtensionService {
 
   /**
    * Toggle a drawer panel: if it is the currently visible panel, close it;
-   * otherwise open (or switch to) it. Mirrors Freeboard's instrument-panel
-   * button behavior.
+   * otherwise open (or switch to) it, so one button both shows and hides it.
    */
   togglePanel(extension: string, panelId: string): boolean {
     const key = `${extension}/${panelId}`;
@@ -1425,6 +1440,17 @@ export class PlotterExtensionService {
     this.overlays.setConfigOpener((entry) =>
       this.openOverlayConfigPanel(entry)
     );
+    // No animated overlays when the user's system asks for reduced motion.
+    // Absent where the browser has no matchMedia (the unit tests' DOM).
+    const reducedMotion = globalThis.matchMedia?.(
+      '(prefers-reduced-motion: reduce)'
+    );
+    if (reducedMotion) {
+      this.overlays.setReducedMotion(reducedMotion.matches);
+      reducedMotion.addEventListener('change', (e) =>
+        this.overlays.setReducedMotion(e.matches)
+      );
+    }
     effect(() => {
       const urls = this.dataStyleUrls();
       untracked(() => this.fetchDataStyles(urls));
@@ -2074,13 +2100,13 @@ export class PlotterExtensionService {
    * disabled, uninstalled, or renamed — is not drawn and must not block its
    * cell, otherwise the empty-looking cell stays un-longpressable (#433).
    */
-  private occupancy(anchor: AnchorId): boolean[][] {
+  private occupancy(anchor: AnchorId, ignore?: string): boolean[][] {
     const { cols, rows } = ANCHOR_GRID[anchor];
     const occupied = Array.from({ length: rows }, () =>
       Array.from({ length: cols }, () => false)
     );
     for (const placed of this.activeWidgets()) {
-      if (placed.anchor !== anchor) continue;
+      if (placed.anchor !== anchor || placed.instanceId === ignore) continue;
       const def = this.widgetDef(placed.extension, placed.widget);
       const size = parseSize(def?.size ?? '1x1');
       for (let r = placed.row; r < placed.row + size.rows && r < rows; r++) {
@@ -2152,16 +2178,26 @@ export class PlotterExtensionService {
    * Best valid origin for a widget at an anchor. When a pressed cell is
    * given, only placements covering that cell are considered, so the user's
    * press location disambiguates (e.g. stacking on top of an existing
-   * widget vs. filling the rest of the gravity row).
+   * widget vs. filling the rest of the gravity row). For a widget being
+   * moved, its own cells count as free, so it can overlap where it is now,
+   * and its current origin is skipped.
    */
   private findOrigin(
     anchor: AnchorId,
     widget: WidgetContribution,
-    pressedCell?: { col: number; row: number }
+    pressedCell?: { col: number; row: number },
+    moving?: PlacedWidget
   ): { col: number; row: number } | null {
     const size = parseSize(widget.size);
-    const occupied = this.occupancy(anchor);
+    const occupied = this.occupancy(anchor, moving?.instanceId);
     for (const origin of this.originOrder(anchor)) {
+      if (
+        moving?.anchor === anchor &&
+        moving.col === origin.col &&
+        moving.row === origin.row
+      ) {
+        continue;
+      }
       if (!this.isValidOrigin(anchor, size, origin, occupied)) continue;
       if (
         pressedCell &&
@@ -2319,22 +2355,88 @@ export class PlotterExtensionService {
     }
   }
 
+  // ---------- moving a placed widget ----------
+
+  /** The placed widget being moved, or null when no move is in progress. */
+  readonly movingWidget = signal<PlacedWidget | null>(null);
+
+  /**
+   * The cells, per anchor, the moving widget can be dropped on. A cell
+   * resolves to an origin the way a press does when adding a widget, so a
+   * drop follows the same packing rules; cells that only fit the widget
+   * where it is now are left out.
+   */
+  readonly moveTargets = computed(() => {
+    const targets = {} as Record<AnchorId, Array<{ col: number; row: number }>>;
+    for (const anchor of ANCHORS) targets[anchor] = [];
+    const moving = this.movingWidget();
+    const def = moving && this.widgetDef(moving.extension, moving.widget);
+    if (!moving || !def) return targets;
+    for (const anchor of ANCHORS) {
+      const { cols, rows } = ANCHOR_GRID[anchor];
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const origin = this.findOrigin(anchor, def, { col, row }, moving);
+          if (origin) targets[anchor].push({ col, row });
+        }
+      }
+    }
+    return targets;
+  });
+
+  /** Start moving a placed widget: the overlay shows where it can go. */
+  startMove(instanceId: string) {
+    const placed = this.activeWidgets().find(
+      (p) => p.instanceId === instanceId
+    );
+    this.movingWidget.set(placed ?? null);
+  }
+
+  cancelMove() {
+    this.movingWidget.set(null);
+  }
+
+  /**
+   * Drop the moving widget on a cell of an anchor area. Returns false, and
+   * keeps the move going, when the widget cannot go there.
+   */
+  dropMovingWidget(
+    anchor: AnchorId,
+    cell: { col: number; row: number }
+  ): boolean {
+    const moving = this.movingWidget();
+    const def = moving && this.widgetDef(moving.extension, moving.widget);
+    if (!moving || !def) return false;
+    const origin = this.findOrigin(anchor, def, cell, moving);
+    if (!origin) return false;
+    // In place: the widget's live connection holds this same object.
+    moving.anchor = anchor;
+    moving.col = origin.col;
+    moving.row = origin.row;
+    this.movingWidget.set(null);
+    this.app.saveConfig();
+    this.refreshActiveWidgets();
+    return true;
+  }
+
   private refreshActiveWidgets() {
     const manifests = this.manifests();
-    this.activeWidgets.set(
-      this.placements().filter((p) => {
-        const manifest = manifests[p.extension];
-        return (
-          manifest &&
-          this.isCompatible(manifest) &&
-          manifest.widgets?.some(
-            (w) =>
-              w.id === p.widget &&
-              (w.apiVersion === undefined || w.apiVersion === HOST_API_VERSION)
-          )
-        );
-      })
-    );
+    const active = this.placements().filter((p) => {
+      const manifest = manifests[p.extension];
+      return (
+        manifest &&
+        this.isCompatible(manifest) &&
+        manifest.widgets?.some(
+          (w) =>
+            w.id === p.widget &&
+            (w.apiVersion === undefined || w.apiVersion === HOST_API_VERSION)
+        )
+      );
+    });
+    this.activeWidgets.set(active);
+    // A widget removed or no longer shown mid-move ends the move.
+    const moving = untracked(this.movingWidget);
+    if (moving && !active.includes(moving)) this.cancelMove();
   }
 
   // ---------- live contexts (one per iframe) ----------
@@ -2766,20 +2868,104 @@ export class PlotterExtensionService {
 
   // ---------- state storage ----------
   //
-  // v0 persistence is browser localStorage. TODO(phase 2 follow-up): persist
-  // through the server's applicationData so widget config follows the user
-  // across devices, mirroring how Freeboard persists its own config.
+  // `storage: 'user'` (the default) is kept in the app config, so it is saved
+  // wherever the config is: it follows a signed-in user across devices, and a
+  // server's global default config can preset the widgets it places.
+  // `storage: 'device'` is kept in this browser's localStorage and never
+  // leaves it. The two stores are separate: no fallback, no merge.
 
   private loadStore(): ExtensionStateStore {
-    try {
-      return JSON.parse(localStorage.getItem(STATE_STORAGE_KEY) ?? '{}');
-    } catch {
-      return {};
+    const store = this.browserStore();
+    for (const [id, saved] of Object.entries(
+      structuredClone(this.app.config.plotterExtensions.state ?? {})
+    )) {
+      const kept = store[id] ?? {};
+      store[id] = {
+        extension: { ...kept.extension, ...saved.extension },
+        instances: { ...kept.instances, ...saved.instances }
+      };
     }
+    return store;
   }
 
   private saveStore(store: ExtensionStateStore) {
-    localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(store));
+    this.app.config.plotterExtensions.state = store;
+    // the config save throws when the browser's storage is full, which keeps
+    // the earlier state as it was
+    this.app.saveConfig();
+    try {
+      localStorage.removeItem(STATE_STORAGE_KEY);
+    } catch {
+      // storage unavailable: the earlier state is merged under the config's
+    }
+  }
+
+  /** What this browser kept before the state moved into the config. */
+  private browserStore(): ExtensionStateStore {
+    return this.readStore(STATE_STORAGE_KEY);
+  }
+
+  /** State is saved as JSON with the config: refuse values JSON can't hold. */
+  private jsonValues(values: Record<string, unknown>): Record<string, unknown> {
+    try {
+      return JSON.parse(JSON.stringify(values));
+    } catch {
+      throw new RpcError('state.set values must be JSON', {
+        code: RPC_ERRORS.INVALID_PARAMS,
+        reason: 'INVALID_VALUES'
+      });
+    }
+  }
+
+  private loadDeviceStore(): ExtensionStateStore {
+    return this.readStore(DEVICE_STATE_STORAGE_KEY);
+  }
+
+  /**
+   * Save this browser's device state, first dropping the instance state of
+   * widgets that are no longer placed (removed on another device, where their
+   * device state could not be reached). Only once the settings in use are
+   * known: while they load, the widget list is not the user's yet.
+   */
+  private saveDeviceStore(store: ExtensionStateStore) {
+    if (this.app.configReady) {
+      const placed = new Set(
+        this.app.config.plotterExtensions.widgets.map((w) => w.instanceId)
+      );
+      for (const [extension, ext] of Object.entries(store)) {
+        for (const id of Object.keys(ext.instances ?? {})) {
+          if (!placed.has(id)) delete ext.instances![id];
+        }
+        if (ext.instances && !Object.keys(ext.instances).length) {
+          delete ext.instances;
+        }
+        if (!Object.keys(ext).length) delete store[extension];
+      }
+    }
+    try {
+      localStorage.setItem(DEVICE_STATE_STORAGE_KEY, JSON.stringify(store));
+    } catch {
+      // full, or blocked (e.g. a private window): the earlier state stays
+      throw new RpcError("This browser can't keep device state", {
+        code: RPC_ERRORS.INTERNAL_ERROR,
+        reason: 'STORAGE_UNAVAILABLE'
+      });
+    }
+  }
+
+  /** A stored state map, dropping anything that is not an object (hand-edited or corrupt). */
+  private readStore(key: string): ExtensionStateStore {
+    const isObject = (v: unknown): v is Record<string, unknown> =>
+      !!v && typeof v === 'object' && !Array.isArray(v);
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '{}');
+      if (!isObject(stored)) return {};
+      return Object.fromEntries(
+        Object.entries(stored).filter(([, ext]) => isObject(ext))
+      ) as ExtensionStateStore;
+    } catch {
+      return {};
+    }
   }
 
   private clearInstanceState(extension: string, instanceId: string) {
@@ -2787,6 +2973,15 @@ export class PlotterExtensionService {
     if (store[extension]?.instances?.[instanceId]) {
       delete store[extension].instances![instanceId];
       this.saveStore(store);
+    }
+    try {
+      const device = this.loadDeviceStore();
+      if (device[extension]?.instances?.[instanceId]) {
+        delete device[extension].instances![instanceId];
+        this.saveDeviceStore(device);
+      }
+    } catch {
+      // storage unavailable: any device state stays until a later prune
     }
   }
 
@@ -2815,13 +3010,24 @@ export class PlotterExtensionService {
       return (extStore.extension = extStore.extension ?? {});
     };
 
+    const storageOf = (storage: unknown): StateStorage => {
+      if (storage === undefined || storage === 'user') return 'user';
+      if (storage === 'device') return 'device';
+      throw new RpcError(`Unknown state storage: ${String(storage)}`, {
+        code: RPC_ERRORS.INVALID_PARAMS,
+        reason: 'INVALID_STORAGE'
+      });
+    };
+
     return {
       'state.get': async (params) => {
-        const { scope, keys } = (params ?? {}) as {
-          scope?: string;
-          keys?: string[];
-        };
-        const values = resolve(this.loadStore(), scope);
+        const { scope, storage, keys } = (params ?? {}) as StateGetParams;
+        const values = resolve(
+          storageOf(storage) === 'device'
+            ? this.loadDeviceStore()
+            : this.loadStore(),
+          scope
+        );
         if (!keys) return { values };
         const filtered: Record<string, unknown> = {};
         for (const key of keys) {
@@ -2830,24 +3036,26 @@ export class PlotterExtensionService {
         return { values: filtered };
       },
       'state.set': async (params) => {
-        const { scope, values } = (params ?? {}) as {
-          scope?: string;
-          values?: Record<string, unknown>;
-        };
+        const { scope, storage, values } = (params ??
+          {}) as Partial<StateSetParams>;
+        const where = storageOf(storage);
         if (!values || typeof values !== 'object') {
           throw new RpcError('state.set requires a values object', {
             code: RPC_ERRORS.INVALID_PARAMS,
             reason: 'INVALID_VALUES'
           });
         }
-        const store = this.loadStore();
+        const store =
+          where === 'device' ? this.loadDeviceStore() : this.loadStore();
         const target = resolve(store, scope);
-        Object.assign(target, values);
-        this.saveStore(store);
+        Object.assign(target, this.jsonValues(values));
+        if (where === 'device') this.saveDeviceStore(store);
+        else this.saveStore(store);
         const useInstance =
           (scope ?? (instanceId ? 'instance' : 'extension')) === 'instance';
         this.publishToExtension(extension, 'state.changed', {
           scope: useInstance ? 'instance' : 'extension',
+          storage: where,
           instanceId: useInstance ? instanceId : null,
           keys: Object.keys(values)
         });

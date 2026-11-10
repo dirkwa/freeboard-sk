@@ -266,6 +266,9 @@ export class SKVessel extends SKTargetBase {
     default: null,
     availableActions: []
   };
+  /** AIS transponder class from `sensors.ais.class`, which sets how often
+   * the vessel reports its position. */
+  aisClass?: 'A' | 'B';
   buddy = false;
   closestApproach: { distance: number | null; timeTo: number | null } = {
     distance: null,
@@ -308,6 +311,23 @@ export class SKVessel extends SKTargetBase {
   registrations: SKRegistrations = {};
   resourceUpdates: PathValue[] = []; // resource deltas
   sog?: number;
+  // local receipt times of SOG and COG: the current worked out from them must
+  // not outlive the GPS that reports them
+  sogUpdatedAt = 0;
+  cogTrueUpdatedAt = 0;
+  cogMagneticUpdatedAt = 0;
+  // navigation.speedThroughWater and when it last arrived: a log that stops
+  // reporting must not keep feeding the current worked out from it
+  stw: number | null = null;
+  stwUpdatedAt = 0;
+  // environment.current, when a source on board publishes it
+  current: {
+    setTrue: number | null;
+    setMagnetic: number | null;
+    drift: number | null;
+  } = { setTrue: null, setMagnetic: null, drift: null };
+  // per value, as the three can arrive in separate deltas
+  currentUpdatedAt = { setTrue: 0, setMagnetic: 0, drift: 0 };
   track: Array<Position[]> = [];
   vectors: { cog: Position[] } = {
     cog: [] // cog vector
@@ -361,6 +381,21 @@ export class SKSaR extends SKTargetBase {
 export class SKAircraft extends SKTargetBase {
   sog = 0;
   track: Array<Position[]> = [];
+  constructor() {
+    super();
+  }
+}
+
+// ** Sensor target class: a `targets.<type>:<id>` context (radar, camera) **
+export class SKSensorTarget extends SKTargetBase {
+  sog?: number;
+  /** Course over ground; undefined until the sensor reports one. */
+  cog?: number;
+  /** Course line from the target's position; null until it reports a course. */
+  vectors: { cog: Position[] | null } = { cog: null };
+  /** Context this target is the same object as (an AIS vessel or another
+   * target), set by a fusion plugin; `null` when it stands on its own. */
+  sameAs: string | null = null;
   constructor() {
     super();
   }

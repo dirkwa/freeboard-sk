@@ -5,7 +5,6 @@ Use it to display:
 - Alarms & notifications
 - AIS information
 - Weather information
-- Signal K instrument WebApps.
 
 and more from any web enabled device.
 
@@ -72,7 +71,9 @@ _Path(s): `/resources/notes`, `/resources/regions`_
 
 __Tracks:__
 
-Whilst not specifically defined in the Signal K specification, Freeboard-SK supports the import and display of tracks from GPX files which are available under the `/resources/tracks` path.
+_Path(s): `/signalk/v2/api/tracks` (Track API), or `/resources/tracks` on older servers_
+
+Freeboard-SK imports tracks from GPX and GeoJSON files and displays them. On a Signal K server whose Track API can store tracks (server 2.34 or later, with the Tracks plugin 3.3 or later), they are kept in the Track API. Tracks imported into earlier versions of Freeboard-SK under `/resources/tracks` are moved there once, when Freeboard-SK connects. For a signed-in user the move waits until their settings have been read from the server, so if that fails it runs on a later connection. A track the Track API won't accept stays where it was and is still listed. On older servers tracks are kept in the custom `/resources/tracks` collection.
 
 - Show / Hide Tracks
 - Delete Tracks
@@ -126,20 +127,6 @@ _See OpenAPI documentation in Signal K Server Admin UI for details._
 ### History Playback
 
 Freeboard-SK supports the Signal K `playback` api and can replay recorded time-series data captured on a Signal K server equipped with the `signalk-to-infludb` plugin.
-
----
-
-### Instruments: 
-
-Freeboard-SK allows you to use your favourite instrumentation apps installed on the Signal K server.
-
-Select one or more installed applications listed in the `settings` screen and they will displayed in the instrument drawer.
-
-When more than one app is selected you can cycle through them within the instrument drawer.
-
-_Note: The `Signal K Instrument Panel` app will be displayed if no user selection has been made._
-
-![instruments](https://user-images.githubusercontent.com/38519157/128668406-02cbb8d8-2353-4e93-ae5e-12e0c7d507fe.png)
 
 ---
 

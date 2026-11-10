@@ -80,6 +80,8 @@ export const AppConfigSchema = Type.Object({
     nightMode: bool(true), // follow environment.mode
     muteSound: bool(false),
     depthAlarm: Type.Object({ enabled: bool(false), smoothing: num(10000) }),
+    // Retired instruments panel settings. Unused here, but older releases read
+    // them unguarded at startup from the config they share with this build.
     plugins: Type.Object({
       instruments: nullable(Type.String(), '/@signalk/instrumentpanel'),
       startOnOpen: bool(true),
@@ -159,7 +161,8 @@ export const AppConfigSchema = Type.Object({
     fixedLocationMode: bool(false),
     fixedPosition: position(),
     trail: bool(true), // from the server when it can supply one (#820)
-    windVectors: bool(true), // vessel TWD, AWD vectors
+    windVectors: bool(false), // vessel TWD, AWD vectors
+    currentVector: bool(true), // set / drift arrow at the own vessel
     laylines: bool(false),
     selfLines: Type.Object({
       cog: selfLine(10, 'rgba(204, 12, 225, 0.7)', 1), // length in minutes at SOG
@@ -231,6 +234,7 @@ export const AppConfigSchema = Type.Object({
     deviceId: Type.Optional(Type.String()),
     opacity: num(1),
     rings: bool(true), // range circles follow the radar range while it transmits
+    ringColor: str('#404040'),
     overlay: bool(false) // radar picture shown on the chart, again after a reload
   }),
   experiments: bool(false),
@@ -254,6 +258,22 @@ export const AppConfigSchema = Type.Object({
         row: Type.Number() // origin cell row (0 | 1)
       }),
       { default: [] }
+    ),
+    // what extensions keep through the host API's `state.*`, per extension:
+    // its own values and each of its widget placements' values
+    state: Type.Optional(
+      Type.Record(
+        Type.String(),
+        Type.Object({
+          extension: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+          instances: Type.Optional(
+            Type.Record(
+              Type.String(),
+              Type.Record(Type.String(), Type.Unknown())
+            )
+          )
+        })
+      )
     )
   }),
   selections: Type.Object({

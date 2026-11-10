@@ -122,6 +122,7 @@ extension id (the providing plugin's id is the recommended key):
 | `buttons.decorations` | Host draws the style, custom colours and badge an extension sets on its own toolbar buttons (`buttons.decorate`) and honours a button's manifest `style`, `colors` and `badge`. Requires `buttons`. See *Decorating buttons*. |
 | `actions`           | Host offers manifest `actions` on chart targets — points, stored resources, vessels, aids to navigation, chart features — reports the user's choice (`action.invoked`, `context.invocation`) and lets the extension show and hide its actions (`actions.setVisibility`). See *Actions*. |
 | `events.publish`    | Host implements `events.publish` (extension-originated events) and the `scope` option on the `publish` button action. See *Publishing events*. |
+| `state.storage`     | Host honours the `storage` parameter of `state.get` / `state.set` (`'user'` or `'device'`) and reports it in `state.changed`. See *State storage*. |
 | `signalk.stream`    | Host streams Signal K path values to extension contexts over the message bus.                                                     |
 | `signalk.put`       | Host relays Signal K PUT requests from extension contexts.                                                                        |
 | `units`             | Host exposes the user's preferred display units (`units.get`).                                                                    |
@@ -137,6 +138,7 @@ extension id (the providing plugin's id is the recommended key):
 | `ui`                | Host implements `ui.openPanel` / `ui.closePanel`.                                                                                 |
 | `windows`           | Host can show an extension's iframe panels as floating windows (`ui.openWindow` and the other `ui.*Window` methods) and emits `window.*` events. See *Windows*. |
 | `overlays.image`    | Host composites map layers whose pixels an extension's background runtime draws (`overlay.*` methods, `overlay.request` / `overlay.state` events). Requires `background.iframe`. See *Map overlays*. |
+| `overlays.animated` | Host grants an image overlay that declares `preferredLiveInterval` a shorter live-frame interval, within its own budget, and reports changes to it in `overlay.state`. Requires `overlays.image`. See *Animated overlays*. |
 | `overlays.data`     | Host draws map layers from data and a MapLibre style an extension supplies (`overlay.*` methods including `overlay.refresh`, `overlay.setData`, `overlay.setLayer` and `overlay.setState`; `overlay.state` events). See *Data overlays*. |
 | `actions.overlay`   | Data-overlay features can be made selectable and are `overlayFeature` targets for their extension's actions. Requires `actions` and `overlays.data`. See *Interactive overlay features*. |
 
@@ -916,8 +918,8 @@ not match and the handshake is refused — a deliberate limitation, not a bug.)
 | `events.subscribe`      | `{ patterns: string[] }`                       | `{ subscriptionId }`       |
 | `events.unsubscribe`    | `{ subscriptionId }`                           | `{}`                       |
 | `events.publish`        | `{ topic, params?, scope? }`                   | `{}`                       |
-| `state.get`             | `{ scope?, keys? }`                            | `{ values }`               |
-| `state.set`             | `{ scope?, values }`                           | `{}`                       |
+| `state.get`             | `{ scope?, storage?, keys? }`                  | `{ values }`               |
+| `state.set`             | `{ scope?, storage?, values }`                 | `{}`                       |
 | `signalk.subscribe`     | `{ paths: string[] }` (literal paths)          | `{ subscriptionId }`       |
 | `signalk.unsubscribe`   | `{ subscriptionId }`                           | `{}`                       |
 | `signalk.put`           | `{ path, value }`                              | server PUT response        |
@@ -987,9 +989,10 @@ connection-level notifications `bus.ready` and `bus.handshake` (see
 Communication) are the only other host/extension events and are
 handled by the protocol layer, not subscribed to.
 
-- `state.changed` — `{ scope, instanceId, keys }`: the extension's stored
-  state changed (e.g. its configuration panel saved). Published to the
-  extension's subscribed contexts.
+- `state.changed` — `{ scope, storage, instanceId, keys }`: the extension's
+  stored state changed (e.g. its configuration panel saved). Published to the
+  extension's subscribed contexts. `storage` names the store that changed; a
+  host without `state.storage` omits it, and its absence means `'user'`.
 - `sk.<path>` — `{ path, value, timestamp, $source }`: a subscribed
   Signal K path value, relayed over the host's multiplexed server
   connection (one upstream connection per host, not per widget).
@@ -1067,8 +1070,9 @@ handled by the protocol layer, not subscribed to.
   pixelRatio, resolution, zoom, rotation, liveInterval? }`: the host wants a new frame for a
   visible overlay. Delivered only to the background runtime named by the
   overlay. See *Map overlays*.
-- `overlay.state` — `{ overlayId, visible, opacity, suspended }`: an overlay was
-  shown, hidden, faded, suspended or resumed. Origin-transparent; owning
+- `overlay.state` — `{ overlayId, visible, opacity, suspended, liveInterval? }`: an
+  overlay was shown, hidden, faded, suspended or resumed, or (image overlays,
+  with `overlays.animated`) its granted live-frame interval changed. Origin-transparent; owning
   extension only. See *Map overlays*.
 
 ### Publishing events
@@ -1819,7 +1823,8 @@ Overlays are declared in an `overlays` manifest section:
       "minZoom": 10,             // optional: no requests below this zoom
       "maxZoom": 22,             // optional: no requests above this zoom
       "configPanel": "depth-settings", // optional: a panel of this manifest
-      "preferredPixelRatio": 2   // optional: the density it looks right at
+      "preferredPixelRatio": 2,  // optional: the density it looks right at
+      "preferredLiveInterval": 100 // optional: animates; least ms between live frames it wants
     }
   ]
 }
@@ -1828,8 +1833,8 @@ Overlays are declared in an `overlays` manifest section:
 `id`, `title` and `type` are required. `type` is `"image"` or `"data"`, and a
 host omits overlays of a type it does not support. An image overlay also requires
 `runtime`, which must name an entry in the same manifest's `background` section,
-or the host omits the overlay. `runtime` and `preferredPixelRatio` apply to image
-overlays only; a data overlay declares a `style` instead (see *Data overlays*).
+or the host omits the overlay. `runtime`, `preferredPixelRatio` and
+`preferredLiveInterval` apply to image overlays only; a data overlay declares a `style` instead (see *Data overlays*).
 
 **Configuration.** An overlay may name a panel from the same manifest via
 `configPanel`, for the settings that shape what it draws (a depth source, a
@@ -1847,6 +1852,13 @@ at — `2` for sharp contour lines, `1` for smooth shading that need not cost th
 memory. A host uses it instead of the screen's density, still within its own
 budget (see *Visibility and the host's budget*), so a request may still come at
 a lower ratio. Without it the host chooses.
+
+**Animation.** `preferredLiveInterval` marks an overlay that animates — wind or
+current particles, a radar sweep — and gives the least time, in milliseconds,
+it wants between live frames. A host with `overlays.animated` grants that
+interval or a longer one (see *Animated overlays*); a host without it ignores
+the field and grants its normal interval. Without it the overlay is not
+animated.
 
 The host lists each overlay in its own layer controls, where the user shows,
 hides and fades it like any other layer. Those choices belong to the user and
@@ -1958,10 +1970,12 @@ moved past its threshold, not on every degree of yaw.
 
 #### Visibility and the host's budget
 
-- **`overlay.state`** — `{ overlayId, visible, opacity, suspended }` — is emitted
-  when the overlay is shown, hidden or faded (by the user or by
-  `overlay.setVisibility` / `overlay.setOpacity`), and when the host suspends or
-  resumes it. While `visible` is false or `suspended` is true the host sends no
+- **`overlay.state`** — `{ overlayId, visible, opacity, suspended,
+  liveInterval? }` — is emitted when the overlay is shown, hidden or faded (by
+  the user or by `overlay.setVisibility` / `overlay.setOpacity`), and when the
+  host suspends or resumes it. With `overlays.animated` it is also emitted when
+  the host changes an image overlay's granted `liveInterval` without a new
+  request (see *Animated overlays*). While `visible` is false or `suspended` is true the host sends no
   requests; the runtime should stop drawing and **release its graphics
   resources** (for WebGL, lose its context). A hidden or suspended data overlay
   is not drawn and its sources are not fetched.
@@ -1973,6 +1987,42 @@ moved past its threshold, not on every degree of yaw.
   the host page's main thread, so heavy drawing in the runtime stalls the whole
   plotter. Render in a Web Worker (`OffscreenCanvas`, then
   `transferToImageBitmap()`) and transfer the result.
+
+#### Animated overlays
+
+An image overlay that declares `preferredLiveInterval` animates by sending live
+frames (frames without a `requestId`) at a steady rate. The wire is the same as
+for any live update: the host announces the interval it grants in each
+`overlay.request`'s `liveInterval`, and the runtime paces itself by it. With
+`overlays.animated` the host grants an animated overlay a shorter interval than
+its normal one when it can afford to. Compositing each frame costs the host
+main-thread time, so the host, not the extension, decides the rate:
+
+- It **may** limit how many overlays animate at once, and should allow at least
+  one. An overlay over the limit is not suspended; it is granted the host's
+  normal interval, and which overlays animate is the host's choice.
+- It **should not** grant an interval shorter than about 33 ms (30 frames a
+  second), whatever the overlay asks for.
+- When the user's system asks for reduced motion (`prefers-reduced-motion:
+  reduce` in a browser host), it **should** grant its normal interval, as if
+  the overlay did not animate.
+- It **may** lengthen the interval when it measures its own compositing cost as
+  too high, and shorten it again, back toward the overlay's preference, when
+  the cost falls. How it measures is the host's own.
+
+When the granted interval changes and no new request is due, the host emits
+`overlay.state` with the new `liveInterval`. A runtime paces by the latest
+interval it was given, from either a request or `overlay.state`. One that does
+not follow `overlay.state` still works: the host refuses frames that come too
+soon with `overlays.throttled`.
+
+**During a gesture** the *Between frames* rule applies: the host keeps moving
+and scaling the last accepted frame, and may refuse live frames
+(`overlays.throttled`) until the view settles. It then sends a new
+`overlay.request`; the runtime answers it and resumes live frames at that
+request's `liveInterval`. A refusal is not an error: the runtime skips that
+frame and keeps its animation state (particle positions, sweep angle) rather
+than restarting.
 
 #### Methods
 
@@ -2048,8 +2098,8 @@ budget.
 
 `style` is required. It is either a URL (see *Source URLs*) or the style object
 itself. A host that cannot load the style, or finds it is not a version-8 style,
-omits the overlay. `runtime` and `preferredPixelRatio` do not apply to a data
-overlay. Live changes come from any of the extension's contexts; this example's
+omits the overlay. `runtime`, `preferredPixelRatio` and `preferredLiveInterval`
+do not apply to a data overlay. Live changes come from any of the extension's contexts; this example's
 background runtime is optional, so without it the overlay still draws, it just
 does not change while shown.
 
@@ -2350,16 +2400,49 @@ mistakes an overlay feature for one of its own, whatever its id.
 ### State storage
 
 `state.get`/`state.set` give an extension small host-persisted key/value
-storage. Two scopes:
+storage. A value has two independent attributes: its **scope** says who sees
+it, and its **storage** says where it is kept.
+
+**Scope** (`scope`):
 
 - `instance` — keyed by the context's widget instance (default for widget
   contexts; configuration panels opened with `targetInstance` read and
   write the _target's_ instance scope).
 - `extension` — shared across the extension's contexts.
 
+**Storage** (`storage`, capability `state.storage`):
+
+| `storage` | Kept | Notes |
+| --- | --- | --- |
+| `'user'` (default) | With the user's settings, wherever the host keeps them: for example on the server for a signed-in user, so the value follows that user to every device. | A host may preset these values from server-wide defaults, so they must not hold secrets. |
+| `'device'` | On this device only (in a browser host, this browser, shared by its tabs). | Never sent to the server and never taken from server-wide defaults. |
+
+All four combinations of scope and storage exist. Use `'user'` for what belongs
+to the person, such as a widget's configuration; use `'device'` for what
+belongs to one screen, such as which windows were open or a layout chosen for a
+narrow display. Omitting `storage` means `'user'`.
+
+The two stores are **separate**. `state.get` returns only the store it names,
+with no fallback from one to the other and no merging; an extension that wants
+a per-device override of a per-user value reads both and merges them itself.
+`state.set` writes only the store it names.
+
+A host without `state.storage` ignores the `storage` parameter and keeps every
+value as `'user'`, so an extension that depends on `'device'` checks the
+capability first. A host with the capability rejects a `storage` value it does
+not know with an invalid-params error, instead of keeping the value somewhere
+the extension did not ask for. (`storage` is a string, not a boolean, so later
+versions can add values; each new value comes with its own capability.)
+
+When the user removes a widget, the host deletes that placement's `instance`
+state from both stores on the device where it was removed. Other devices may
+still hold `'device'` entries for it; a host prunes those when it finds state
+for an `instanceId` that is no longer placed.
+
 Every successful `state.set` triggers a `state.changed` event — the loop
 that lets a widget re-render live while its configuration panel edits it.
-Quota and persistence backend are host-defined.
+The event carries the `storage` that was written. Quota and persistence
+backend are host-defined.
 
 ### Unit preferences
 
@@ -2803,11 +2886,13 @@ A Signal K plugin:
 
 4. Declares the `signalk-node-server-plugin` and
    `signalk-category-plotter-extensions` keywords in `package.json`, plus
-   any existing App Store category that fits (e.g.
-   `signalk-category-chart-plotters`, `signalk-category-weather`). A host
-   discovers installable extensions by searching the npm registry for
-   `keywords:signalk-category-plotter-extensions` and hands installation to
-   the server's App Store; see
+   any other App Store category that fits (e.g.
+   `signalk-category-chart-plotters`, `signalk-category-weather`). The
+   `signalk-category-plotter-extensions` keyword lists the extension under
+   the App Store's _Plotter Extensions_ category (Signal K server 2.36.0 and
+   later). A host discovers installable extensions by searching the npm
+   registry for `keywords:signalk-category-plotter-extensions` and hands
+   installation to the server's App Store; see
    [Package keywords](./plotter_extension_provider_plugins.md#package-keywords).
 
 ---

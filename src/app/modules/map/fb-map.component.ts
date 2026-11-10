@@ -87,7 +87,12 @@ import { AppFacade } from 'src/app/app.facade';
 import { RadarAPIService } from 'src/app/modules/radar/radar-api.service';
 import { GuardZoneEditService } from 'src/app/modules/radar/guard-zone-edit.service';
 import { powerState, sendsImage } from 'src/app/modules/radar/radar-controls';
+import {
+  acquireRequest,
+  radarTargetRef
+} from 'src/app/modules/radar/radar-targets';
 import { PlotterExtensionService } from 'src/app/modules/plotterext/plotterext.service';
+import { TemporaryRouteService } from 'src/app/modules/course/temporary-route.service';
 import { ExtActionsComponent } from 'src/app/modules/plotterext/ext-actions.component';
 import type { UsableAction } from 'src/app/modules/plotterext/actions';
 import { pickedTarget } from 'src/app/modules/plotterext/map-pick';
@@ -117,6 +122,7 @@ import {
 } from 'src/app/modules/radar/range-rings';
 import {
   RangeRing,
+  radarRingColor,
   sameRings
 } from 'src/app/modules/map/ol/lib/navigation/layer-range-circles.component';
 
@@ -129,6 +135,7 @@ import {
   SKAtoN,
   SKAircraft,
   SKSaR,
+  SKSensorTarget,
   SKMeteo,
   SKStreamFacade,
   AnchorService,
@@ -144,6 +151,7 @@ import {
   mapInteractions,
   aircraftStyles,
   sarStyles,
+  sensorTargetStyles,
   regionStyles,
   routeStyles,
   anchorStyles,
@@ -211,12 +219,15 @@ import {
 } from './route-waypoint-links';
 import { waypointSnapAt } from './ol/lib/waypoint-snap';
 import { drawnWaypoints } from './ol/lib/resources/route-waypoint-overlap';
+import { aisTargetShown } from 'src/app/lib/ais-filter';
 import {
   ActiveRoutePoint,
+  distanceAlongRoute,
   followedPointIndex,
   pickRoutePoints,
   preferredRoutePoint,
-  ROUTE_POINT_PICK_PX
+  ROUTE_POINT_PICK_PX,
+  timeToGo
 } from './route-point-pick';
 import { AppIconDef, SymbolService } from '../icons';
 import {
@@ -242,6 +253,14 @@ import {
 import { Observable, Subscription } from 'rxjs';
 import { TrackHistoryService } from 'src/app/modules/skstream/track-history.service';
 import { AIS_TRACK_MIN_ZOOM } from 'src/app/modules/skstream/track-source';
+import {
+  fusedVessels,
+  isRadarTarget,
+  linkingTargets,
+  locateTarget,
+  TARGET_STALE_MS,
+  unlinkedTargets
+} from 'src/app/modules/skstream/sensor-targets';
 import {
   durationLabel,
   HistoryTrack,
@@ -273,6 +292,9 @@ interface IFeatureData {
   atons: Map<string, SKAtoN>;
   sar: Map<string, SKSaR>;
   meteo: Map<string, SKMeteo>;
+  targets: Map<string, SKSensorTarget>; // sensor targets not linked to a drawn boat
+  radarTargets: Map<string, SKSensorTarget>; // the radar ones among them
+  otherTargets: Map<string, SKSensorTarget>; // camera and other sensors
   self: SKVessel; //self vessel
   ais: Map<string, SKVessel>; // other vessels
   active: SKVessel; // focussed vessel
@@ -290,6 +312,8 @@ interface TrackHistoryFeature {
   name?: string;
   lines: Position[][];
   times?: PointTime[][];
+  /** A provider's answer, thinned or simplified (see TimedTrack). */
+  thinned?: boolean;
   at: Position;
 }
 
@@ -462,6 +486,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
     destination: destinationStyles,
     aircraft: aircraftStyles,
     sar: sarStyles,
+    sensorTarget: sensorTargetStyles,
     layline: laylineStyles,
     targetAngle: targetAngleStyle,
     raceCourse: raceCourseStyles,
@@ -486,6 +511,9 @@ export class FBMapComponent implements OnInit, OnDestroy {
     atons: new Map(),
     sar: new Map(),
     meteo: new Map(),
+    targets: new Map(),
+    radarTargets: new Map(),
+    otherTargets: new Map(),
     self: new SKVessel(), //self vessel
     ais: new Map(), // other vessels
     active: new SKVessel(), // focussed vessel
@@ -646,6 +674,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
   protected notiMgr = inject(NotificationManager);
   protected plotterExt = inject(PlotterExtensionService);
   protected course = inject(CourseService);
+  private temporaryRoutes = inject(TemporaryRouteService);
   protected symbols = inject(SymbolService);
   private routeReverse = inject(RouteReverseService);
   protected mapInteract = inject(FBMapInteractService);
@@ -672,6 +701,32 @@ export class FBMapComponent implements OnInit, OnDestroy {
   });
   // "Show Track" draws AIS tracks from this zoom, as the stream worker fetches them
   protected readonly aisTrackMinZoom = AIS_TRACK_MIN_ZOOM;
+  protected readonly targetStaleMs = TARGET_STALE_MS;
+
+  /**
+   * The AIS vessels the chart draws, under the AIS display setting and
+   * selections. A sensor target linked to a vessel left out stays on the
+   * chart, so the boat does not disappear.
+   */
+  private drawnAisVessels(): Map<string, SKVessel> {
+    if (!this.app.config.ui.showAisTargets) {
+      return new Map();
+    }
+    const selections = this.app.config.selections;
+    const drawn = new Map<string, SKVessel>();
+    this.app.data.vessels.aisTargets.forEach((vessel, id) => {
+      if (
+        aisTargetShown(id, vessel, {
+          filterIds: selections.aisTargets,
+          filterByShipType: selections.aisFilterByShipType,
+          filterShipTypes: selections.aisTargetTypes
+        })
+      ) {
+        drawn.set(id, vessel);
+      }
+    });
+    return drawn;
+  }
   // Layers drawn at the vessel take each fix at once, not when the glide
   // towards it ends, and are shifted along with the glide (ViewDirective)
   // while the map follows the active vessel; lines from the vessel to a fixed
@@ -701,6 +756,14 @@ export class FBMapComponent implements OnInit, OnDestroy {
   // and transmits
   protected showsRadarRings(): boolean {
     return this.app.config.radars.rings && this.radarRings().length > 0;
+  }
+  // the night dimming of the whole screen, not the dark theme, which leaves
+  // the chart as it is
+  protected radarRingColor(): string {
+    return radarRingColor(
+      this.app.config.radars.ringColor,
+      this.skstream.selfNightMode() || this.app.uiCtrl().forceNightMode
+    );
   }
   protected radarRings = computed<RangeRing[]>(
     () => {
@@ -902,11 +965,27 @@ export class FBMapComponent implements OnInit, OnDestroy {
     if (!this.dfeat.self.position || !Array.isArray(this.dfeat.self.position)) {
       this.dfeat.self.position = lastPos;
     }
-    this.dfeat.ais = this.app.data.vessels.aisTargets;
+    this.dfeat.ais = fusedVessels(
+      this.app.data.vessels.aisTargets,
+      this.app.data.targets
+    );
     this.dfeat.aircraft = this.app.data.aircraft;
     this.dfeat.sar = this.app.data.sar;
     this.dfeat.meteo = this.app.data.meteo;
     this.dfeat.atons = this.app.data.atons;
+    this.dfeat.targets = unlinkedTargets(
+      this.app.data.targets,
+      this.drawnAisVessels(),
+      this.app.data.vessels.self
+    );
+    this.dfeat.radarTargets = new Map();
+    this.dfeat.otherTargets = new Map();
+    this.dfeat.targets.forEach((target, id) =>
+      (isRadarTarget(id)
+        ? this.dfeat.radarTargets
+        : this.dfeat.otherTargets
+      ).set(id, target)
+    );
     this.dfeat.active = this.app.data.vessels.active;
     this.dfeat.navData.position = this.course.courseData().position;
     this.dfeat.navData.startPosition = this.course.courseData().startPosition;
@@ -916,7 +995,11 @@ export class FBMapComponent implements OnInit, OnDestroy {
       const self = this.app.data.vessels.self.position;
       if (self) {
         this.app.data.vessels.closest.forEach((id: string) => {
-          const target = this.app.data.vessels.aisTargets.get(id)?.position;
+          const target = locateTarget(
+            id,
+            this.dfeat.ais,
+            this.app.data.targets
+          );
           const cpa = this.app.data.vessels.cpaPositions.get(id);
           if (target || cpa) {
             v.push({
@@ -963,6 +1046,16 @@ export class FBMapComponent implements OnInit, OnDestroy {
               });
             });
           }
+        } else if (type === 'aton' && id?.startsWith('targets.')) {
+          const target = this.dfeat.targets.get(id);
+          if (target) {
+            this.overlay.update((current) => {
+              return Object.assign({}, current, {
+                position: target.position ?? current.position,
+                aton: target
+              });
+            });
+          }
         }
       }
       // The popover follows the vessel in whichever world copy it was opened in:
@@ -991,6 +1084,9 @@ export class FBMapComponent implements OnInit, OnDestroy {
       case 'ais':
         return !this.dfeat.ais.has(id);
       case 'aton':
+        if (id.startsWith('targets.')) {
+          return !this.dfeat.targets.has(id);
+        }
         return !(id.startsWith('sar.') ? this.dfeat.sar : this.dfeat.atons).has(
           id
         );
@@ -1066,10 +1162,86 @@ export class FBMapComponent implements OnInit, OnDestroy {
       case 'get_feature_info':
         this.getFeatureInfo();
         break;
+      case 'radar_acquire':
+        this.acquireRadarTarget(pos);
+        break;
       default:
         this.menuItemSelected.emit(action);
         break;
     }
+  }
+
+  /**
+   * The radar whose picture is shown, while it is still the selected one. On
+   * a switch the selection moves before the new radar's details load, and a
+   * radar list that comes back empty clears the selection but not the details.
+   */
+  private shownRadarId(): string | undefined {
+    const id = this.radarApi.radar()?.device?.id;
+    return id && id === this.radarApi.radarId() ? id : undefined;
+  }
+
+  /**
+   * Whether the chart menu offers Track Radar Target: a radar is reported and
+   * its picture shows. The picture's power state alone reads as sending while
+   * no radar has reported at all.
+   */
+  protected canTrackRadarTarget(): boolean {
+    return (
+      !!this.shownRadarId() &&
+      this.radarImage() &&
+      this.app.uiCtrl().radarLayer &&
+      this.app.data.vessels.showSelf
+    );
+  }
+
+  /** Have the shown radar acquire and track the echo at `pos`. */
+  private async acquireRadarTarget(pos: Position) {
+    const radarId = this.shownRadarId();
+    const request = acquireRequest(this.app.data.vessels.self.position, pos);
+    if (!radarId || !request) {
+      return;
+    }
+    try {
+      await this.radarApi.acquireTarget(radarId, request);
+      this.app.showMessage(
+        'Tracking started. Without an echo there, the radar drops the target after a few sweeps.'
+      );
+    } catch (err) {
+      this.app.showAlert('Radar', (err as Error).message);
+    }
+  }
+
+  /** Stop the radar tracking the target with context `id`. */
+  protected async cancelRadarTarget(id: string | null) {
+    const ref = radarTargetRef(id);
+    if (!ref) {
+      return;
+    }
+    try {
+      await this.radarApi.cancelTarget(ref.radarId, ref.targetId);
+    } catch (err) {
+      this.app.showAlert('Radar', (err as Error).message);
+    }
+  }
+
+  /**
+   * The radar targets linked to vessel `id`, which is drawn in their place, so
+   * its popover is where they are stopped.
+   */
+  protected radarTargetsLinkedTo(id: string | null): string[] {
+    return id === null
+      ? []
+      : linkingTargets(id, this.app.data.targets).filter(
+          (t) => radarTargetRef(t) !== null
+        );
+  }
+
+  /** Stop the radars tracking the targets linked to vessel `id`. */
+  protected async cancelLinkedRadarTargets(id: string | null) {
+    await Promise.all(
+      this.radarTargetsLinkedTo(id).map((t) => this.cancelRadarTarget(t))
+    );
   }
 
   /** The user chose an extension action from the chart context menu. */
@@ -2343,17 +2515,36 @@ export class FBMapComponent implements OnInit, OnDestroy {
   private activeRoutePoint(index: number): ActiveRoutePoint {
     const c = this.course.courseData();
     // Point names are in the order the route is stored.
-    const stored = followedPointIndex(
-      index,
-      c.pointTotal,
-      this.app.data.activeRouteReversed
-    );
+    const reversed = this.app.data.activeRouteReversed;
+    const stored = followedPointIndex(index, c.pointTotal, reversed);
+    const self = this.app.data.vessels.self;
+    // The course's point index can arrive before the geometry of a newly
+    // followed route, so the distance is measured on the cached route only
+    // when its point count matches the course.
+    const geometry = this.app.data.activeRoute
+      ? this.skres.fromCache('routes', this.app.data.activeRoute)?.[1].feature
+          .geometry.coordinates
+      : undefined;
+    const followed =
+      geometry && geometry.length === c.pointTotal
+        ? reversed
+          ? [...geometry].reverse()
+          : geometry
+        : null;
+    const distance =
+      self.position && followed
+        ? distanceAlongRoute(self.position, followed, c.pointIndex, index)
+        : undefined;
     return {
       index,
+      distance,
+      timeToGo: timeToGo(distance, self.sog),
       total: c.pointTotal,
       name: c.pointNames?.[stored] || undefined,
       position: c.activeRoutePoints?.[stored],
-      isNext: index === c.pointIndex
+      isNext: index === c.pointIndex,
+      nextIndex: c.pointIndex,
+      routeId: this.app.data.activeRoute ?? ''
     };
   }
 
@@ -2461,6 +2652,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
       let sar: SKSaR | undefined;
       let meteo: SKMeteo | undefined;
       let aircraft: SKAircraft | undefined;
+      let sensorTarget: SKSensorTarget | undefined;
       let vessel: SKVessel | undefined;
       let icon: AppIconDef | undefined;
       let text: string | undefined;
@@ -2628,6 +2820,19 @@ export class FBMapComponent implements OnInit, OnDestroy {
             aircraft = this.app.data.aircraft.get(id);
             text = aircraft ? aircraft.name || aircraft.mmsi : '';
             break;
+          case 'targets':
+            icon = {
+              name: 'radar',
+              svgIcon: undefined
+            };
+            addToFeatureList = true;
+            sensorTarget = this.app.data.targets.get(id);
+            text = sensorTarget
+              ? sensorTarget.name ||
+                sensorTarget.mmsi ||
+                sensorTarget.type?.name
+              : '';
+            break;
           case TRACK_HISTORY_ID:
             addToFeatureList = true;
             icon = {
@@ -2639,6 +2844,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
               context: feature.get('context'),
               lines: [feature.get('line')],
               times: feature.get('times') ? [feature.get('times')] : undefined,
+              thinned: true,
               at: e.lonlat
             };
             break;
@@ -2674,6 +2880,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
                 context,
                 lines: timed.lines,
                 times: timed.times,
+                thinned: true,
                 at: e.lonlat
               };
             }
@@ -2684,11 +2891,12 @@ export class FBMapComponent implements OnInit, OnDestroy {
             // the time each point was logged
             // the local trail carries on from the server trail, so both answer
             // from the two joined into one passage
+            const serverShown = this.app.selfTrailFromServer().length > 0;
             const timed =
               id === 'trail.self.server' || id === 'trail.self.local'
                 ? trailTapTrack(
                     this.app.selfTrailTimed(),
-                    this.app.selfTrailFromServer().length > 0,
+                    serverShown,
                     this.app.localTrailTimed()
                   )
                 : null;
@@ -2700,6 +2908,8 @@ export class FBMapComponent implements OnInit, OnDestroy {
                 context: 'self',
                 lines: timed.lines,
                 times: timed.times,
+                // the server thins its trail by time; this device logs its own
+                thinned: serverShown && !!this.app.selfTrailTimed(),
                 at: e.lonlat
               };
             }
@@ -2953,6 +3163,18 @@ export class FBMapComponent implements OnInit, OnDestroy {
         poData.show = true;
         break;
       }
+      case 'targets': {
+        const target = this.dfeat.targets.get(id);
+        if (!target) {
+          return false;
+        }
+        poData.type = 'aton';
+        poData.id = id;
+        poData.aton = target;
+        poData.position = target.position ?? coord;
+        poData.show = true;
+        break;
+      }
       case 'aircraft': {
         const aircraft = this.app.data.aircraft.get(id);
         if (!aircraft) {
@@ -3180,7 +3402,7 @@ export class FBMapComponent implements OnInit, OnDestroy {
       route:
         hf.times &&
         trackSectionRoute(
-          { lines: hf.lines, times: hf.times },
+          { lines: hf.lines, times: hf.times, thinned: hf.thinned },
           hf.at,
           stopMs(hf.context)
         )
@@ -3240,7 +3462,14 @@ export class FBMapComponent implements OnInit, OnDestroy {
         (atTime !== undefined &&
           poseAt(timed.lines, timed.times, atTime)?.position) ||
         hf.at;
-      return { ...hf, lines: timed.lines, times: timed.times, at };
+      // a provider's answer, to which the local trail adds only its tail
+      return {
+        ...hf,
+        lines: timed.lines,
+        times: timed.times,
+        thinned: true,
+        at
+      };
     };
     // the route the popover waits for, made at once if MAKE ROUTE was chosen
     // while it loaded; none withdraws the offer
@@ -3279,7 +3508,11 @@ export class FBMapComponent implements OnInit, OnDestroy {
           thinned &&
           trackHistory.route
             ? trackSectionSpan(
-                { lines: tapped.lines, times: tapped.times },
+                {
+                  lines: tapped.lines,
+                  times: tapped.times,
+                  thinned: tapped.thinned
+                },
                 tapped.at,
                 stopMs(hf.context)
               )
@@ -3731,6 +3964,14 @@ export class FBMapComponent implements OnInit, OnDestroy {
 
   protected skipRoutePoint(pointIndex: number) {
     this.course.skipRoutePoint(pointIndex);
+  }
+
+  protected endRouteAt(point: ActiveRoutePoint) {
+    this.temporaryRoutes.endActiveRouteAt(
+      point.routeId,
+      point.nextIndex,
+      point.index
+    );
   }
 
   // ** emit info event **

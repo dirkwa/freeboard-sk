@@ -19,17 +19,131 @@ function popover(point: ActiveRoutePoint) {
 
 describe('RoutePointPopoverComponent — Skip', () => {
   it('offers SKIP on the point being headed for', () => {
-    expect(popover({ index: 1, total: 4, isNext: true }).canSkip()).toBe(true);
+    expect(
+      popover({
+        index: 1,
+        total: 4,
+        isNext: true,
+        nextIndex: 1,
+        routeId: 'r'
+      }).canSkip()
+    ).toBe(true);
   });
 
   it('does not offer SKIP on another point', () => {
-    expect(popover({ index: 2, total: 4, isNext: false }).canSkip()).toBe(
-      false
-    );
+    expect(
+      popover({
+        index: 2,
+        total: 4,
+        isNext: false,
+        nextIndex: 1,
+        routeId: 'r'
+      }).canSkip()
+    ).toBe(false);
   });
 
   it('does not offer SKIP on the last point', () => {
-    expect(popover({ index: 3, total: 4, isNext: true }).canSkip()).toBe(false);
+    expect(
+      popover({
+        index: 3,
+        total: 4,
+        isNext: true,
+        nextIndex: 3,
+        routeId: 'r'
+      }).canSkip()
+    ).toBe(false);
+  });
+});
+
+/**
+ * The distance, time to go and arrival time of a point, for points not yet
+ * passed.
+ */
+describe('RoutePointPopoverComponent — estimates', () => {
+  const render = (point: Partial<ActiveRoutePoint>) => {
+    TestBed.configureTestingModule({
+      imports: [RoutePointPopoverComponent],
+      providers: [
+        {
+          provide: AppFacade,
+          useValue: {
+            config: { units: { positionFormat: 'XY' } },
+            formatValueForDisplay: (v: number, unit: string) => `${v} ${unit}`
+          }
+        }
+      ]
+    });
+    const fixture = TestBed.createComponent(RoutePointPopoverComponent);
+    fixture.componentRef.setInput('point', point as ActiveRoutePoint);
+    fixture.detectChanges();
+    return { fixture };
+  };
+
+  beforeEach(() => TestBed.resetTestingModule());
+
+  it('shows the distance, time to go and arrival time of a point ahead', () => {
+    const { fixture } = render({
+      index: 2,
+      total: 4,
+      isNext: false,
+      distance: 3704,
+      timeToGo: 1440
+    });
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+
+    expect(text).toContain('DTG:');
+    expect(text).toContain('3704 m');
+    expect(text).toContain('TTG at SOG:');
+    expect(text).toContain('1440 s');
+    expect(text).toContain('ETA at SOG:');
+  });
+
+  it('shows the distance alone while the vessel is stopped', () => {
+    const { fixture } = render({
+      index: 2,
+      total: 4,
+      isNext: false,
+      distance: 3704
+    });
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+
+    expect(text).toContain('DTG:');
+    expect(text).not.toContain('TTG at SOG:');
+    expect(text).not.toContain('ETA at SOG:');
+  });
+
+  it('leaves out the estimates for a point already passed', () => {
+    const { fixture } = render({ index: 0, total: 4, isNext: false });
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+
+    expect(text).not.toContain('DTG:');
+    expect(text).not.toContain('ETA at SOG:');
+  });
+});
+
+describe('RoutePointPopoverComponent — ETA', () => {
+  const eta = (ttg: number, now: Date) =>
+    (
+      Object.create(RoutePointPopoverComponent.prototype) as unknown as {
+        eta: (ttg: number, now: Date) => string;
+      }
+    ).eta(ttg, now);
+
+  it('gives the time alone when it is today', () => {
+    const now = new Date(2026, 10, 7, 10, 0);
+    expect(eta(1800, now)).toBe(
+      new Date(2026, 10, 7, 10, 30).toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit'
+      })
+    );
+  });
+
+  it('adds the date when it is not today', () => {
+    const now = new Date(2026, 10, 7, 22, 0);
+    expect(eta(4 * 3600, now)).toContain(
+      new Date(2026, 10, 8).toLocaleDateString()
+    );
   });
 });
 
@@ -61,7 +175,13 @@ describe('RoutePointPopoverComponent — actions', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
   it('skips the point it shows', () => {
-    const { fixture, button } = render({ index: 1, total: 4, isNext: true });
+    const { fixture, button } = render({
+      index: 1,
+      total: 4,
+      isNext: true,
+      nextIndex: 1,
+      routeId: 'r'
+    });
     let skipped: number | undefined;
     fixture.componentInstance.skip.subscribe((i) => (skipped = i));
 
@@ -75,6 +195,8 @@ describe('RoutePointPopoverComponent — actions', () => {
       index: 2,
       total: 4,
       isNext: false,
+      nextIndex: 1,
+      routeId: 'r',
       position: [24.95, 60.16]
     });
     let rejoined: number | undefined;
@@ -83,5 +205,44 @@ describe('RoutePointPopoverComponent — actions', () => {
     button('REJOIN HERE')?.click();
 
     expect(rejoined).toBe(2);
+  });
+
+  it('ends the route at the point it shows', () => {
+    const { fixture, button } = render({
+      index: 2,
+      total: 4,
+      isNext: false,
+      nextIndex: 1,
+      routeId: 'r'
+    });
+    let ended: ActiveRoutePoint | undefined;
+    fixture.componentInstance.end.subscribe((p) => (ended = p));
+
+    button('END HERE')?.click();
+
+    expect(ended).toMatchObject({ index: 2, nextIndex: 1, routeId: 'r' });
+  });
+});
+
+describe('RoutePointPopoverComponent — End here', () => {
+  const ends = (point: ActiveRoutePoint) =>
+    (popover(point) as unknown as { canEnd: () => boolean }).canEnd();
+
+  it('offers END HERE on the point headed for and points after it', () => {
+    expect(
+      ends({ index: 1, total: 4, isNext: true, nextIndex: 1, routeId: 'r' })
+    ).toBe(true);
+    expect(
+      ends({ index: 2, total: 4, isNext: false, nextIndex: 1, routeId: 'r' })
+    ).toBe(true);
+  });
+
+  it('does not offer END HERE behind the vessel or on the last point', () => {
+    expect(
+      ends({ index: 1, total: 4, isNext: false, nextIndex: 2, routeId: 'r' })
+    ).toBe(false);
+    expect(
+      ends({ index: 3, total: 4, isNext: false, nextIndex: 1, routeId: 'r' })
+    ).toBe(false);
   });
 });

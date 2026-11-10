@@ -14,24 +14,6 @@ import {
 import { OwnVesselIconType } from 'src/app/modules/icons/vessels';
 import { Observable, Subject } from 'rxjs';
 
-interface SKAppsList {
-  author: string;
-  description: string;
-  license: string;
-  location: string;
-  _location: string; //npm linked app
-  name: string;
-  version: string;
-}
-
-/** An installed webapp, as offered in the Instruments and Favourites lists. */
-interface AppListEntry {
-  name: string;
-  description: string;
-  /** null for the "None" entry */
-  url: string | null;
-}
-
 interface ResourceTypeList {
   [key: string]: {
     $source: string;
@@ -284,13 +266,40 @@ export class SettingsOptions {
 
 @Injectable({ providedIn: 'root' })
 export class SettingsFacade {
-  applicationList: AppListEntry[] = []; // installed webapp list
-  favouritesList: AppListEntry[] = []; // favourite webapp selections
   resourcePathList: string[] = []; // resource layer list
-  fixedPosition: Position = [0, 0];
-
-  settings!: IAppConfig;
   data!: FBAppData;
+
+  // The config in use, read on every access: a config loaded from the server
+  // replaces the object while the settings dialog may be open.
+  get settings(): IAppConfig {
+    return this.app.config;
+  }
+
+  // The fixed position being edited, kept apart from the config until
+  // applySettings(). It follows a config that replaces the one it was taken
+  // from, unless the user has edited it since.
+  private position: {
+    from: IAppConfig | null;
+    taken: Position;
+    edit: Position;
+  } = { from: null, taken: [0, 0], edit: [0, 0] };
+
+  get fixedPosition(): Position {
+    const config = this.app.config;
+    const p = this.position;
+    if (p.from !== config) {
+      const edited =
+        p.from !== null &&
+        (p.edit[0] !== p.taken[0] || p.edit[1] !== p.taken[1]);
+      const taken = config.vessels.fixedPosition.slice() as Position;
+      this.position = {
+        from: config,
+        taken,
+        edit: edited ? p.edit : (taken.slice() as Position)
+      };
+    }
+    return this.position.edit;
+  }
 
   // Observables
   protected changeEvent: Subject<string[]>;
@@ -305,10 +314,6 @@ export class SettingsFacade {
     this.change$ = this.changeEvent.asObservable();
 
     this.data = this.app.data;
-    this.settings = this.app.config;
-
-    this.fixedPosition =
-      this.settings.vessels.fixedPosition.slice() as Position;
   }
 
   /** Notify of setting attribute change */
@@ -324,10 +329,7 @@ export class SettingsFacade {
 
   /** Refresh dynamic data from sources */
   refresh() {
-    this.settings = this.app.config;
-    this.fixedPosition =
-      this.settings.vessels.fixedPosition.slice() as Position;
-    this.getApps();
+    this.position = { from: null, taken: [0, 0], edit: [0, 0] };
     this.getResourcePaths();
     this.app.fetchUnitPrefsFromSKServer();
   }
@@ -346,68 +348,6 @@ export class SettingsFacade {
         this.resourcePathList = [];
       }
     );
-  }
-
-  /** Populate applications list */
-  private getApps() {
-    // apps list - default an entry to stored config value
-    if (this.app.config.display.plugins.instruments) {
-      // deliberately the bare stored URL, not an entry
-      this.applicationList.push(
-        this.app.config.display.plugins.instruments as unknown as AppListEntry
-      );
-    }
-
-    (this.signalk.apps.list() as Observable<Array<SKAppsList>>).subscribe(
-      (a) => {
-        this.applicationList = a
-          .map((i) => {
-            if (i.name === '@signalk/freeboard-sk') {
-              return null;
-            }
-            if (!i._location && !i.location) {
-              // npm linked app
-              return {
-                name: i.name,
-                description: i.description,
-                url: `/${i.name}`
-              };
-            }
-            if (typeof i._location !== 'undefined') {
-              // legacywebapps list
-              const x = i._location.indexOf('/signalk-server/');
-              return {
-                name: i.name,
-                description: i.description,
-                url: x === -1 ? i._location : i._location.slice(15)
-              };
-            } else if (typeof i.location !== 'undefined') {
-              return {
-                name: i.name,
-                description: i.description,
-                url: i.location
-              };
-            }
-          })
-          .filter((e) => e !== null && e !== undefined);
-
-        this.applicationList.unshift({
-          name: 'None',
-          description: '',
-          url: null
-        });
-
-        this.buildFavouritesList();
-      },
-      () => {
-        this.app.debug('ERROR retrieving AppList!');
-      }
-    );
-  }
-
-  /** Favourited plugins / apps */
-  buildFavouritesList() {
-    this.favouritesList = this.applicationList.slice(1);
   }
 
   /** Apply / persist settings */

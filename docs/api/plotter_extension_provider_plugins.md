@@ -353,7 +353,15 @@ await client.subscribe(['event.name'], (name, params) => {}) // bus events
 
 - `client.state.get(keys?, scope?)` / `client.state.set(values, scope?)` —
   host-persisted key/value storage. Scope defaults to the widget `instance`;
-  pass `'extension'` for state shared across all your contexts.
+  pass `'extension'` for state shared across all your contexts. Values follow
+  the user to every device by default. For a choice that belongs to one screen
+  (which windows were open, a layout picked for a phone), pass an options
+  object instead of the scope string:
+  `client.state.set({ titleBars }, { scope: 'extension', storage: 'device' })`,
+  and read it back the same way. `'device'` values stay in this browser and
+  are separate from the user's values (capability `state.storage`; a host
+  without it keeps everything per user). Never keep secrets in state: a server
+  can preset users' values from its defaults.
 - `client.signalk.subscribe(paths, ev => …)` — live SK values; the callback
   gets `{ path, value, … }`. Returns an unsubscribe function.
 - `client.signalk.put(path, value)` — a SK PUT through the user's session.
@@ -930,6 +938,65 @@ Things to know:
   button needed. Ask for the density you need with `preferredPixelRatio` (the
   host still clamps it), and pace live frames by the request's `liveInterval`.
 
+### Animating a map layer
+
+Wind or current particles, a radar sweep, a moving front: an animated layer is
+an image overlay that sends live frames at a steady rate. Declare the rate you
+want with `preferredLiveInterval` (milliseconds between frames: `33` is about
+30 frames a second, `100` is 10), and list `overlays.animated` in `optional`.
+A host without it gives you its normal live-frame pace, and the layer still
+works, just less smoothly.
+
+```jsonc
+{
+  "requires": ["background.iframe", "overlays.image"],
+  "optional": ["overlays.animated"],
+  "overlays": [{ "id": "wind-flow", "title": "Wind flow", "type": "image",
+                 "runtime": "renderer", "band": "aboveCharts",
+                 "preferredLiveInterval": 33 }]
+}
+```
+
+The host decides the actual rate. It may grant a longer interval than you asked
+for, animate only one overlay at a time, slow you down when compositing gets
+expensive, or not animate at all when the user asks for reduced motion. Pace by
+the interval you were given, not the one you asked for. Building on the runtime
+above:
+
+```js
+let interval = null // the host's latest grant
+let timer = null
+
+function tick() {
+  timer = setTimeout(tick, interval ?? 200)
+  if (latest && !busy) sendLiveFrame(latest) // no requestId: a live frame
+}
+
+await client.subscribe(['overlay.request'], (_name, req) => {
+  latest = req
+  interval = req.liveInterval ?? interval
+  draw() // answer the request first
+  if (!timer) tick()
+})
+await client.subscribe(['overlay.state'], (_name, st) => {
+  if (st.liveInterval !== undefined) interval = st.liveInterval
+  if (!st.visible || st.suspended) {
+    clearTimeout(timer)
+    timer = null
+    worker.postMessage({ release: true })
+  }
+})
+```
+
+- **Advance the animation in the Worker,** and draw each frame there
+  (`OffscreenCanvas`, then `transferToImageBitmap()`). Keep one frame in flight:
+  await each `overlay.frame` before sending the next.
+- **A refused frame is normal.** During a pan or zoom the host keeps moving the
+  last frame and refuses live frames (`overlays.throttled`) until the view
+  settles, then sends a new request. Skip the frame; don't reset your particles.
+- **Stop when hidden or suspended.** Stop the timer and release your graphics
+  resources until the overlay is shown again.
+
 ## Drawing a map layer from data
 
 With `overlays.data` you do not draw at all. You serve your data — depth grids
@@ -1199,14 +1266,20 @@ Declare:
   registers its manifest and mounts its assets. A package without it can be
   neither installed from the App Store nor run.
 - **`signalk-category-plotter-extensions`** (required) — marks the package as
-  a plotter extension. Hosts find installable extensions by searching the npm
-  registry for this keyword (`keywords:signalk-category-plotter-extensions`),
-  so a host can offer to send the user to the App Store to install one.
-- **At least one existing `signalk-category-*` keyword** (recommended) — the
+  a plotter extension, and does two things:
+  - **It lists your extension under the App Store's _Plotter Extensions_
+    category** (Signal K server 2.36.0 and later). Without it, users browsing
+    that category will not see your extension.
+  - **It lets hosts find your extension.** Hosts find installable extensions
+    by searching the npm registry for this keyword
+    (`keywords:signalk-category-plotter-extensions`), so a host can offer to
+    send the user to the App Store to install one.
+- **At least one other `signalk-category-*` keyword** (recommended) — the
   App Store category that fits what your extension does: `chart-plotters`,
-  `weather`, `ais`, `utility`, and so on. The server only shows categories it
-  knows and silently ignores the rest; the current list is
-  `CAT_KEYWORDS_TO_NAMES` in the server's
+  `weather`, `ais`, `utility`, and so on. This also places your extension in
+  a category on servers older than 2.36.0, which don't know _Plotter
+  Extensions_. The server only shows categories it knows and silently ignores
+  the rest; the current list is `CAT_KEYWORDS_TO_NAMES` in the server's
   [`src/categories.ts`](https://github.com/SignalK/signalk-server/blob/master/src/categories.ts).
 
 ## Declaring companion plugins

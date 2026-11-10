@@ -1,13 +1,15 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
+import { firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { MatBottomSheet } from '@angular/material/bottom-sheet';
 import {
   ALARM_METHOD,
+  ALARM_STATE,
   NotificationMessage,
   PathValue,
   SKNotification
 } from '../../types/stream';
-import { CpaPositions, Position } from 'src/app/types';
+import { CpaPositions, Position, SKPosition } from 'src/app/types';
 import { AppFacade } from 'src/app/app.facade';
 import { SKWorkerService } from '../skstream/skstream.service';
 import { AlertData, AlertProperties } from './components/alert.component';
@@ -15,16 +17,72 @@ import { getAlertIcon } from '../icons';
 import { SignalKClient } from 'signalk-client-angular';
 import { AlertPropertiesModal } from './components/alert-properties-modal';
 
+/**
+ * MOBs kept on this display only (addLocalMob()). Stored so that they outlive
+ * a reload, which a tablet browser does to a tab in the background.
+ */
+const LOCAL_MOB_STORAGE_KEY = 'fb-local-mobs';
+
+interface StoredLocalMob {
+  createdAt: number;
+  position: SKPosition | null;
+}
+
+/** The stored local MOBs that are well formed; storage may hold anything. */
+function parseLocalMobs(raw: string | null): StoredLocalMob[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw ?? '[]');
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((v: Partial<StoredLocalMob> | null) => {
+    if (!v || !Number.isFinite(v.createdAt)) {
+      return [];
+    }
+    const p = v.position;
+    const position =
+      p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)
+        ? { latitude: p.latitude, longitude: p.longitude }
+        : null;
+    return [{ createdAt: v.createdAt as number, position }];
+  });
+}
+
+/**
+ * How long a raised alarm may wait for the server. A MOB that waits longer,
+ * on a dropped network or a rebooting server, is kept on this display instead.
+ */
+const RAISE_TIMEOUT_MS = 3000;
+
 /** How long a buddy's message stays up: long enough to press LOCATE. */
 const BUDDY_MESSAGE_MS = 10000;
 
 type AlertItems = Array<[string, AlertData]>;
+
+/**
+ * What became of a raised alarm: the id the server gave it, or null when the
+ * server did not take it. That is the case on a display nobody is logged in
+ * to, on a server without the Notifications API (or before Freeboard has
+ * found it), and when the request fails or gets no answer in time; only a
+ * failed request is reported as an error.
+ */
+export type RaiseResult = { id: string } | null;
 
 type AlertFlag = 'acknowledged' | 'silenced';
 
 /** An acknowledge / silence request and the alarm state it was sent for */
 interface PendingAction {
   state: AlertData['priority'];
+  /** The request has not been answered yet */
+  inFlight: boolean;
+  /** A delta confirmed the action while the request was in flight */
+  confirmed?: boolean;
+  /** A silence the server refused, kept in this browser only (isRefused()) */
+  local?: boolean;
 }
 
 /** The Notifications API gives every notification an id and a status. */
@@ -42,6 +100,16 @@ interface CpaNotification extends SKNotification {
     cpaPositions?: { self?: unknown; target?: unknown };
   };
   other?: string;
+}
+
+/**
+ * Whether the server refused an action because the user may not change
+ * notifications, as on a display nobody is logged in to. Freeboard then keeps
+ * a silence in this browser only, so a sounding alarm can still be quietened.
+ * It lasts until the alarm changes state, as one the server silenced would.
+ */
+function isRefused(err: HttpErrorResponse): boolean {
+  return err?.status === 401 || err?.status === 403;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -72,6 +140,11 @@ export class NotificationManager {
 
   constructor() {
     this.alertMap = new Map();
+    const localMobs = this.readLocalMobs();
+    if (localMobs.length) {
+      localMobs.forEach((mob) => this.showLocalMob(mob));
+      this.emitSignals();
+    }
 
     // ** SIGNAL K STREAM Message**
     this.worker.notification$().subscribe((msg: NotificationMessage) => {
@@ -195,7 +268,11 @@ export class NotificationManager {
         canAcknowledge: v.status.canAcknowledge,
         canSilence: v.status.canSilence,
         canCancel: v.status.canClear,
-        createdAt: v.createdAt ? new Date(v.createdAt).valueOf() : Date.now()
+        createdAt: v.createdAt
+          ? new Date(v.createdAt).valueOf()
+          : replaced && replaced.id === v.id
+            ? replaced.createdAt
+            : Date.now()
       };
     } /* else {
       if (alertType === 'notification') {
@@ -387,7 +464,8 @@ export class NotificationManager {
    *
    * The action is therefore kept pending, shown over the server's status, until
    * a delta confirms it (settlePendingActions()). If the request fails it is
-   * dropped, and the alert shows the server's latest status again.
+   * dropped, and the alert shows the server's latest status again, except for a
+   * silence the server refuses to this user, which stays (isRefused()).
    * @param path Path of the alert
    * @param action Notifications API action
    * @param flag Alert status flag the action sets
@@ -408,7 +486,7 @@ export class NotificationManager {
       return;
     }
     const { id } = alert;
-    const entry: PendingAction = { state: alert.priority };
+    const entry: PendingAction = { state: alert.priority, inFlight: true };
     pending.set(id, entry);
     this.emitSignals();
     this.signalk.api
@@ -416,15 +494,42 @@ export class NotificationManager {
       .subscribe(
         () => {
           this.app.debug(`${action} ${id}, ${path}`);
+          this.answerPendingAction(pending, id, entry, 'done');
         },
         (err: HttpErrorResponse) => {
-          if (pending.get(id) === entry) {
-            pending.delete(id);
-            this.emitSignals();
+          if (action === 'silence' && isRefused(err)) {
+            this.answerPendingAction(pending, id, entry, 'refused');
+            return;
           }
+          this.answerPendingAction(pending, id, entry, 'failed');
           this.app.parseHttpErrorResponse(err);
         }
       );
+  }
+
+  /**
+   * Apply the answer to an action's request to its pending entry, unless a
+   * delta has already dropped the entry because the alert cleared, was
+   * replaced or changed state; the answer then concerns an alarm that is gone.
+   * A refused silence stays in this browser (isRefused()), and a successful
+   * request whose delta already confirmed it is settled.
+   */
+  private answerPendingAction(
+    pending: Map<string, PendingAction>,
+    id: string,
+    entry: PendingAction,
+    answer: 'done' | 'refused' | 'failed'
+  ) {
+    entry.inFlight = false;
+    if (pending.get(id) !== entry) {
+      return;
+    }
+    if (answer === 'refused') {
+      entry.local = true;
+    } else if (answer === 'failed' || entry.confirmed) {
+      pending.delete(id);
+      this.emitSignals();
+    }
   }
 
   /**
@@ -445,14 +550,25 @@ export class NotificationManager {
    * @description Drop the pending actions a notification delta settles: those
    * it confirms, and those sent for a different alarm state. The server clears
    * acknowledged / silenced when an alarm escalates, so a pending action must
-   * not hide the escalated alarm.
+   * not hide the escalated alarm. A confirmation that arrives while the
+   * request is in flight is noted, and the answer settles it, since a refusal
+   * keeps the silence in this browser after all.
    * @param v Notification value
    */
   private settlePendingActions(v: ApiNotification) {
     for (const flag of ['acknowledged', 'silenced'] as const) {
       const entry = this.pendingActions[flag].get(v.id);
-      if (entry && (v.status[flag] || v.state !== entry.state)) {
+      if (!entry) {
+        continue;
+      }
+      if (v.state !== entry.state) {
         this.pendingActions[flag].delete(v.id);
+      } else if (v.status[flag] && !entry.local) {
+        if (entry.inFlight) {
+          entry.confirmed = true;
+        } else {
+          this.pendingActions[flag].delete(v.id);
+        }
       }
     }
   }
@@ -467,21 +583,44 @@ export class NotificationManager {
   }
 
   /**
-   * @description Silence All alerts
+   * @description Silence All alerts. Each alert it covers shows silenced
+   * straight away, as for MUTE (see applyAlertAction()). Only the alerts there
+   * when it is pressed are covered, so an alarm raised or escalated while the
+   * request is under way still sounds.
    */
   public silenceAll() {
-    if (this.app.featureFlags().notificationApi) {
-      this.signalk.api
-        .post(this.app.skApiVersion, `notifications/silenceAll`, {})
-        .subscribe(
-          () => {
-            this.app.debug(`Silenced All alerts`);
-          },
-          (err: HttpErrorResponse) => {
+    if (!this.app.featureFlags().notificationApi) {
+      return;
+    }
+    const pending = this.pendingActions.silenced;
+    const entries = new Map<string, PendingAction>();
+    for (const alert of this.alertMap.values()) {
+      if (alert.canSilence && !alert.silenced && !pending.has(alert.id)) {
+        const entry: PendingAction = { state: alert.priority, inFlight: true };
+        pending.set(alert.id, entry);
+        entries.set(alert.id, entry);
+      }
+    }
+    this.emitSignals();
+    this.signalk.api
+      .post(this.app.skApiVersion, `notifications/silenceAll`, {})
+      .subscribe(
+        () => {
+          this.app.debug(`Silenced All alerts`);
+          for (const [id, entry] of entries) {
+            this.answerPendingAction(pending, id, entry, 'done');
+          }
+        },
+        (err: HttpErrorResponse) => {
+          const answer = isRefused(err) ? 'refused' : 'failed';
+          for (const [id, entry] of entries) {
+            this.answerPendingAction(pending, id, entry, answer);
+          }
+          if (answer === 'failed') {
             this.app.parseHttpErrorResponse(err);
           }
-        );
-    }
+        }
+      );
   }
 
   /**
@@ -510,18 +649,102 @@ export class NotificationManager {
    * @description Raise Alarm on server
    * @param path Alarm type to raise
    */
-  public raiseServerAlarm(alarmType: string, message?: string) {
-    if (this.app.featureFlags().notificationApi) {
-      this.signalk.api
-        .post(this.app.skApiVersion, `notifications/mob`, { message: message })
-        .subscribe(
-          (r: { id: string }) => {
-            this.app.debug(`MOB Alarm raised (${r.id})`);
-          },
-          (err: HttpErrorResponse) => {
-            this.app.parseHttpErrorResponse(err);
-          }
-        );
+  public async raiseServerAlarm(
+    alarmType: string,
+    message?: string
+  ): Promise<RaiseResult> {
+    if (!this.app.featureFlags().notificationApi) {
+      return null;
+    }
+    try {
+      const r = await firstValueFrom(
+        this.signalk.api
+          .post(this.app.skApiVersion, `notifications/mob`, {
+            message: message
+          })
+          .pipe(timeout(RAISE_TIMEOUT_MS))
+      );
+      const id = (r as { id?: string }).id;
+      this.app.debug(`MOB Alarm raised (${id})`);
+      return id ? { id } : null;
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        this.app.debug('MOB request timed out');
+      } else if (!isRefused(err as HttpErrorResponse)) {
+        this.app.parseHttpErrorResponse(err as HttpErrorResponse);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Show a MOB the server did not take on this display alone, so the crew still
+   * get its card and marker. It lasts, across reloads, until it is ended here.
+   * @returns The local alert's id
+   */
+  public addLocalMob(position: SKPosition | null, createdAt: number): string {
+    const id = this.showLocalMob({ createdAt, position });
+    this.emitSignals();
+    this.writeLocalMobs();
+    return id;
+  }
+
+  /** End a MOB shown on this display alone. */
+  public removeLocalMob(alert: AlertData) {
+    if (alert.local && this.alertMap.delete(alert.path)) {
+      this.emitSignals();
+      this.writeLocalMobs();
+    }
+  }
+
+  private showLocalMob({ createdAt, position }: StoredLocalMob): string {
+    const id = `local-${createdAt}`;
+    const alert: AlertData = {
+      id,
+      path: `notifications.mob.${id}`,
+      priority: ALARM_STATE.emergency,
+      message: 'Person Overboard!',
+      sound: false,
+      visual: true,
+      properties: position ? { position } : {},
+      icon: {},
+      type: 'mob',
+      acknowledged: false,
+      silenced: false,
+      canAcknowledge: false,
+      canSilence: false,
+      canCancel: true,
+      createdAt,
+      local: true
+    };
+    alert.icon = getAlertIcon(alert);
+    this.alertMap.set(alert.path, alert);
+    return id;
+  }
+
+  private readLocalMobs(): StoredLocalMob[] {
+    try {
+      return parseLocalMobs(localStorage.getItem(LOCAL_MOB_STORAGE_KEY));
+    } catch {
+      return [];
+    }
+  }
+
+  private writeLocalMobs() {
+    const mobs: StoredLocalMob[] = [...this.alertMap.values()]
+      .filter((a) => a.local)
+      .map((a) => ({
+        createdAt: a.createdAt,
+        position: a.properties.position ?? null
+      }));
+    try {
+      if (mobs.length) {
+        localStorage.setItem(LOCAL_MOB_STORAGE_KEY, JSON.stringify(mobs));
+      } else {
+        localStorage.removeItem(LOCAL_MOB_STORAGE_KEY);
+      }
+    } catch {
+      // storage unavailable: the MOB stays until this page is reloaded
     }
   }
 

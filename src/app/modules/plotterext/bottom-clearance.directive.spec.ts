@@ -5,7 +5,6 @@ import {
   BottomClearanceDirective,
   HRect,
   bottomClearance,
-  maxPanelRight,
   reachesLeftToolbar
 } from './bottom-clearance.directive';
 import { PlotterExtensionService } from './plotterext.service';
@@ -89,38 +88,6 @@ describe('bottomClearance', () => {
 
   it('never pushes the panel off the top of the area', () => {
     expect(clear([{ left: 0, right: 124, top: 20 }])).toBe(500);
-  });
-});
-
-// The nav data panel sits 10 px from the left of a 1000 px wide area and may
-// grow to calc(100% - 75px), so it reaches x = 935 however wide its content
-// is at the moment.
-describe('maxPanelRight', () => {
-  const area = { left: 0, width: 1000 };
-
-  it('resolves calc(100% - n px) against the area', () => {
-    expect(maxPanelRight(10, 'calc(100% - 75px)', area)).toBe(935);
-  });
-
-  it('resolves a percentage and a length', () => {
-    expect(maxPanelRight(10, '50%', area)).toBe(510);
-    expect(maxPanelRight(10, '300px', area)).toBe(310);
-  });
-
-  it('stops at the area edge, also without a max-width', () => {
-    expect(maxPanelRight(10, '100%', area)).toBe(1000);
-    expect(maxPanelRight(10, 'none', area)).toBe(1000);
-  });
-
-  it('clears a widget the panel only covers at its widest', () => {
-    // TTG and ETA appear only while making way and widen the panel past
-    // x = 610; the widget at the bottom right must count either way
-    const widget = { left: 800, right: 924, top: 476 };
-    const at = (right: number) =>
-      bottomClearance({ left: 10, right, height: 100 }, [widget], 600, 600, 30);
-    expect(at(maxPanelRight(10, 'calc(100% - 75px)', area))).toBe(
-      124 + WIDGET_CELL_GAP
-    );
   });
 });
 
@@ -215,7 +182,7 @@ describe('BottomClearanceDirective', () => {
 
   const mount = async <T extends { emitted: number[] }>(
     host: new () => T = ClearanceHost as unknown as new () => T,
-    rect = new DOMRect(10, 470, 120, 100)
+    rect: DOMRect | (() => DOMRect) = new DOMRect(10, 470, 120, 100)
   ) => {
     TestBed.configureTestingModule({
       imports: [host],
@@ -230,7 +197,8 @@ describe('BottomClearanceDirective', () => {
     const area = fixture.nativeElement as HTMLElement;
     area.getBoundingClientRect = () => new DOMRect(0, 0, 1000, 600);
     Object.defineProperty(panel, 'offsetParent', { get: () => area });
-    panel.getBoundingClientRect = () => rect;
+    panel.getBoundingClientRect = () =>
+      typeof rect === 'function' ? rect() : rect;
     fixture.detectChanges();
     await fixture.whenStable();
     return fixture;
@@ -243,17 +211,53 @@ describe('BottomClearanceDirective', () => {
     expect(fixture.componentInstance.emitted).toEqual([30]);
   });
 
-  it('lifts the panel over a widget it covers only at its max-width', async () => {
-    // the panel is 120 px wide now, but may grow to 300 px, past x = 150
-    cell('pe-bl', new DOMRect(150, 476, 124, 124));
+  it('sits on the stack it covers', async () => {
+    cell('pe-bl', new DOMRect(0, 476, 124, 124));
     const fixture = await mount();
     expect(fixture.componentInstance.emitted).toEqual([124 + WIDGET_CELL_GAP]);
+  });
+
+  it('stays down beside a widget it would cover only at its max-width', async () => {
+    // the panel is 120 px wide now and may grow to 300 px, past x = 150
+    cell('pe-bl', new DOMRect(150, 476, 124, 124));
+    const fixture = await mount();
+    expect(fixture.componentInstance.emitted).toEqual([30]);
+  });
+
+  it('rises over a taller stack once it grows that wide', async () => {
+    let notify = () => {};
+    let panelRect = new DOMRect(10, 470, 120, 100);
+    const Original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(cb: () => void) {
+        notify = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      cell('pe-bl', new DOMRect(0, 476, 124, 124));
+      cell('pe-bl', new DOMRect(150, 346, 124, 254));
+      const fixture = await mount(ClearanceHost, () => panelRect);
+      expect(fixture.componentInstance.emitted.at(-1)).toBe(
+        124 + WIDGET_CELL_GAP
+      );
+      // route data shown while making way widens the panel past x = 150
+      panelRect = new DOMRect(10, 470, 300, 100);
+      notify();
+      expect(fixture.componentInstance.emitted.at(-1)).toBe(
+        254 + WIDGET_CELL_GAP
+      );
+    } finally {
+      globalThis.ResizeObserver = Original;
+    }
   });
 
   it('keeps its resting offset above a stack the status bar sits on', async () => {
     statusBar();
     cell('pe-bl', new DOMRect(200, 476, 124, 124));
-    const fixture = await mount();
+    const fixture = await mount(ClearanceHost, new DOMRect(10, 470, 300, 100));
     expect(fixture.componentInstance.emitted).toEqual([124 + 30]);
   });
 
@@ -341,7 +345,7 @@ describe('BottomClearanceDirective', () => {
   it('rises over a stack under a status bar it covers only by that bar', async () => {
     statusBar();
     cell('pe-bl', new DOMRect(400, 476, 124, 124));
-    const fixture = await mount(ClearanceHost, new DOMRect(10, 470, 120, 100));
+    const fixture = await mount(ClearanceHost, new DOMRect(10, 470, 300, 100));
     expect(fixture.componentInstance.emitted).toEqual([124 + 30]);
   });
 
@@ -349,7 +353,7 @@ describe('BottomClearanceDirective', () => {
     // the upper pane ends mid-screen, so its status bar rests there
     statusBar(new DOMRect(0, 0, 1000, 300));
     cell('pe-bl', new DOMRect(400, 476, 124, 124));
-    const fixture = await mount(ClearanceHost, new DOMRect(10, 470, 120, 100));
+    const fixture = await mount(ClearanceHost, new DOMRect(10, 470, 300, 100));
     expect(fixture.componentInstance.emitted).toEqual([30]);
   });
 

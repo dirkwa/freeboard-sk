@@ -89,6 +89,7 @@ export const AppConfigSchema = Type.Object({
     }),
     preferInfoPanel: bool(true),
     splitView: bool(false), // offer the Split view button: a second chart pane
+    positionBar: bool(true), // the bar with the pointer's Lat/Lon, zoom and bearing
     whatsNew: bool(true), // light the What's New button while changes are unseen
     // false keeps a logged-in user's settings in this browser only
     saveToServer: bool(true),

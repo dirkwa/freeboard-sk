@@ -81,7 +81,7 @@ interface PendingAction {
   inFlight: boolean;
   /** A delta confirmed the action while the request was in flight */
   confirmed?: boolean;
-  /** A silence the server refused, kept in this browser only (isRefused()) */
+  /** An action the server refused, kept in this browser only (isRefused()) */
   local?: boolean;
 }
 
@@ -105,8 +105,9 @@ interface CpaNotification extends SKNotification {
 /**
  * Whether the server refused an action because the user may not change
  * notifications, as on a display nobody is logged in to. Freeboard then keeps
- * a silence in this browser only, so a sounding alarm can still be quietened.
- * It lasts until the alarm changes state, as one the server silenced would.
+ * the silence or acknowledgement in this browser only, so a sounding alarm can
+ * still be quietened. It lasts until the alarm changes state, as one the
+ * server acted on would.
  */
 function isRefused(err: HttpErrorResponse): boolean {
   return err?.status === 401 || err?.status === 403;
@@ -470,8 +471,8 @@ export class NotificationManager {
    *
    * The action is therefore kept pending, shown over the server's status, until
    * a delta confirms it (settlePendingActions()). If the request fails it is
-   * dropped, and the alert shows the server's latest status again, except for a
-   * silence the server refuses to this user, which stays (isRefused()).
+   * dropped, and the alert shows the server's latest status again, except for an
+   * action the server refuses to this user, which stays (isRefused()).
    * @param path Path of the alert
    * @param action Notifications API action
    * @param flag Alert status flag the action sets
@@ -503,7 +504,7 @@ export class NotificationManager {
           this.answerPendingAction(pending, id, entry, 'done');
         },
         (err: HttpErrorResponse) => {
-          if (action === 'silence' && isRefused(err)) {
+          if (isRefused(err)) {
             this.answerPendingAction(pending, id, entry, 'refused');
             return;
           }
@@ -517,7 +518,7 @@ export class NotificationManager {
    * Apply the answer to an action's request to its pending entry, unless a
    * delta has already dropped the entry because the alert cleared, was
    * replaced or changed state; the answer then concerns an alarm that is gone.
-   * A refused silence stays in this browser (isRefused()), and a successful
+   * A refused action stays in this browser (isRefused()), and a successful
    * request whose delta already confirmed it is settled.
    */
   private answerPendingAction(
@@ -558,7 +559,7 @@ export class NotificationManager {
    * acknowledged / silenced when an alarm escalates, so a pending action must
    * not hide the escalated alarm. A confirmation that arrives while the
    * request is in flight is noted, and the answer settles it, since a refusal
-   * keeps the silence in this browser after all.
+   * keeps the action in this browser after all.
    * @param v Notification value
    */
   private settlePendingActions(v: ApiNotification) {

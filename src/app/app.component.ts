@@ -211,7 +211,7 @@ const TRACK_API_NOTICE_KEY = 'fb-track-api-notice-dismissed';
   ]
 })
 export class AppComponent {
-  @ViewChild('sideright', { static: false }) sideright!: MatSidenav;
+  private sideright = viewChild<MatSidenav>('sideright');
   @ViewChild('fbMap', { static: false }) fbMap!: FBMapComponent;
   @ViewChild('layersmenu', { static: true }) private layersMenu!: MatMenu;
   @ViewChild('editmenu', { static: true }) private editMenu!: MatMenu;
@@ -388,15 +388,19 @@ export class AppComponent {
       this.handleSettingChangeEvent();
     });
 
+    // the drawer exists only once the view is built, which a settings load
+    // or a panel opening at start-up can precede
     effect(() => {
+      const drawer = this.sideright();
+      if (!drawer) {
+        return;
+      }
       if (this.infoPanel.opened() || this.app.instrumentPanel().activate) {
-        if (!this.sideright?.opened) {
+        if (!drawer.opened) {
           this.openDrawer();
         }
-      } else {
-        if (this.sideright?.opened) {
-          this.closeDrawer();
-        }
+      } else if (drawer.opened) {
+        this.closeDrawer();
       }
     });
 
@@ -1569,11 +1573,11 @@ export class AppComponent {
   // ********* SIDENAV ACTIONS *************
 
   protected openDrawer() {
-    this.sideright.open();
+    void this.sideright()?.open();
   }
 
   protected closeDrawer() {
-    this.sideright.close();
+    void this.sideright()?.close();
   }
 
   protected openInstrumentPanel() {
@@ -2336,7 +2340,7 @@ export class AppComponent {
       } else {
         this.app.data.vessels.active = av;
         // if instrument panel open - close it
-        this.sideright.close();
+        this.closeDrawer();
       }
     }
     this.app.data.activeRoute = null;
